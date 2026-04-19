@@ -1,186 +1,264 @@
 # Reglas de Optimizacion
 
 ## Objetivo
-Esta guia sirve para identificar, separar y documentar:
+Esta guia resume como identificar y documentar las reglas de optimizacion del problema de ripening, separando:
 
-- La funcion objetivo del problema.
-- Las restricciones que no se pueden violar.
-- Los requisitos que definen que una solucion sea valida o deseable.
+- objetivo economico,
+- restricciones duras,
+- penalizaciones,
+- alertas operativas,
+- y requisitos de datos.
 
-## 1. Como identificar el objetivo de optimizacion
-Primero hay que detectar que se quiere mejorar. En general, el problema buscara una de estas dos cosas:
+## 1. Regla principal del negocio
+El objetivo real no es solo usar menos camaras ni solo cumplir una fecha. El objetivo es:
 
-- Maximizar: ganancia, cobertura, productividad, uso de capacidad, nivel de servicio.
-- Minimizar: costo, tiempo, desperdicio, riesgo, retraso, distancia, consumo.
+- maximizar valor economico,
+- o de forma equivalente, minimizar perdida economica total.
 
-Preguntas utiles:
+En este contexto, perder plata puede venir de:
 
-- Que variable define que una solucion es mejor que otra?
-- Si dos soluciones cumplen todo, por cual criterio elegimos una?
-- El problema busca ahorrar, acelerar, asignar, balancear o priorizar?
+- pedidos entregados tarde,
+- pedidos no cumplidos,
+- producto madurado sin demanda asignada,
+- producto sobre madurado,
+- uso de camaras,
+- cambios de receta,
+- perdida de valor por envejecimiento del producto.
 
-Senales comunes en el enunciado:
+## 2. Jerarquia correcta de optimizacion
+Para este problema, la jerarquia recomendada es:
 
-- "Reducir", "minimizar", "disminuir" -> objetivo de minimizacion.
-- "Aumentar", "maximizar", "mejorar" -> objetivo de maximizacion.
-- "Priorizar" -> puede implicar pesos, niveles de servicio o ranking.
+1. Cumplir fecha objetivo del pedido.
+2. Cumplir cantidad pedida.
+3. Evitar madurar producto sin demanda asignada.
+4. Minimizar perdida economica total.
+5. Usar la menor cantidad posible de camaras, siempre que no empeore la utilidad.
 
-## 2. Como identificar restricciones
-Las restricciones son condiciones que limitan las soluciones posibles. Si una solucion viola una restriccion, no deberia considerarse valida.
+## 3. Como clasificar cada regla
 
-### Restricciones duras
-Son obligatorias. No se pueden romper.
-
-Ejemplos:
-
-- El presupuesto no puede superar un limite.
-- La capacidad de una maquina no puede excederse.
-- Un pedido debe asignarse a una sola ruta.
-- Una tarea no puede comenzar antes que otra.
-- Un recurso no puede estar en dos lugares al mismo tiempo.
-
-Preguntas utiles:
-
-- Que cosas estan prohibidas?
-- Que limites numericos aparecen en el problema?
-- Que reglas operativas siempre deben cumplirse?
-- Que dependencias o precedencias existen?
-
-### Restricciones blandas
-No invalidan una solucion, pero generan penalizacion o menor calidad.
+### Objetivo de optimizacion
+Va en la funcion objetivo cuando sirve para comparar soluciones economicamente.
 
 Ejemplos:
 
-- Preferir un proveedor sobre otro.
-- Evitar cambios frecuentes de turno.
-- Mantener balance entre cargas de trabajo.
-- Intentar entregar antes de una fecha ideal.
+- minimizar atraso total,
+- minimizar perdida por producto sobre madurado,
+- minimizar producto madurado sin salida,
+- minimizar costo de uso de camaras,
+- minimizar costo de cambio de receta.
 
-Preguntas utiles:
-
-- Que dice el problema que "conviene" hacer, aunque no sea obligatorio?
-- Hay preferencias, prioridades o politicas internas?
-- Existen casos donde se acepta incumplir algo a cambio de costo o penalidad?
-
-## 3. Como identificar requisitos
-Los requisitos describen lo que el sistema o la solucion debe hacer o respetar.
-
-### Requisitos funcionales
-Definen comportamientos o decisiones que deben existir.
+### Restriccion dura
+Si una condicion no se puede violar, es restriccion dura.
 
 Ejemplos:
 
-- Asignar cada pedido a un vehiculo.
-- Calcular una secuencia de produccion.
-- Seleccionar una combinacion de recursos.
+- no exceder capacidad de camara,
+- no usar una receta incompatible con el producto,
+- no asignar mas cantidad que la disponible en un lote,
+- no poner el mismo lote en dos camaras al mismo tiempo,
+- no violar reglas fisicas del proceso,
+- no exceder silenciosamente la cantidad pedida.
 
-### Requisitos no funcionales
-Definen calidad, desempeno o condiciones de operacion.
+### Alerta o excepcion operativa
+Si una condicion no siempre invalida el plan, pero indica riesgo o perdida, debe modelarse como alerta.
 
 Ejemplos:
 
-- Responder en menos de cierto tiempo.
-- Escalar a miles de registros.
-- Ser explicable para el usuario.
-- Mantener trazabilidad de las decisiones.
+- riesgo de sobre maduracion,
+- riesgo de terminar tarde,
+- riesgo de terminar demasiado temprano si eso degrada calidad,
+- exceso de inventario madurado sin demanda,
+- necesidad de cambio de receta para llegar a fecha.
 
-Preguntas utiles:
+## 4. Reglas especificas del problema de ripening
 
-- Que tiene que producir la solucion?
-- Que entradas recibe?
-- Que salidas debe entregar?
-- En que tiempo o con que precision debe operar?
+### 4.1 Fecha objetivo
+La fecha objetivo pertenece a la demanda, no al producto.
 
-## 4. Como pasar del enunciado a reglas de optimizacion
-Una forma practica es traducir cada frase del problema a una categoria.
+- `Product` define el tipo de fruta.
+- `Order` y `OrderProduct` definen para cuando y cuanto necesita el cliente.
 
-### Frases que suelen indicar objetivo
+Conclusion:
 
-- "Queremos minimizar..."
-- "Buscamos maximizar..."
-- "La mejor solucion es la que..."
+- la optimizacion debe organizar lotes, recetas y camaras para cumplir la fecha del pedido.
 
-### Frases que suelen indicar restriccion
+### 4.2 Sobre maduracion
+La sobre maduracion no debe tratarse como una simple preferencia.
 
-- "No debe..."
-- "Como maximo..."
-- "Como minimo..."
-- "Debe cumplir..."
-- "Solo se permite..."
+- si el producto sobre madurado deja de ser util para el pedido, debe tratarse como estado invalido o perdida severa,
+- si todavia puede venderse con descuento, debe registrarse como perdida economica alta y como alerta.
 
-### Frases que suelen indicar requisito
+Regla practica:
 
-- "El sistema debe..."
-- "La solucion debe considerar..."
-- "Se necesita calcular..."
+- si sobre madurar rompe el negocio, va como restriccion o excepcion critica,
+- si sobre madurar genera menor precio, va como penalizacion economica fuerte.
 
-## 5. Plantilla de analisis
-Usa esta estructura para cualquier problema:
+### 4.3 Exceso de producto madurado
+Madurar producto por encima de la demanda es una fuente directa de perdida de valor.
 
-### Problema
-Describir en una frase que decision se necesita tomar.
+- no deberia ser un resultado normal del plan,
+- si ocurre, debe quedar modelado como excedente, sobrante o inventario no asignado,
+- y debe impactar negativamente la funcion objetivo.
+
+### 4.4 Cambios de receta
+Los cambios de receta no son un fin en si mismos.
+
+- solo importan si ayudan a cumplir fecha objetivo,
+- o si reducen perdida economica total.
+
+Conclusion:
+
+- el sistema no debe minimizar cambios de receta por defecto,
+- debe evaluarlos por su impacto en cumplimiento y utilidad.
+
+### 4.5 Uso de camaras
+Usar menos camaras es una buena regla, pero subordinada al objetivo economico.
+
+- no conviene usar pocas camaras si eso genera atraso o sobre maduracion,
+- si dos planes cumplen igual, se prefiere el que usa menos camaras o menor costo de operacion.
+
+## 5. Variables de decision del problema
+Las decisiones reales del optimizador no ocurren sobre el producto abstracto, sino sobre inventario y recursos fisicos.
+
+Las variables de decision suelen ser:
+
+- que lote usar,
+- que cantidad de ese lote asignar,
+- que receta aplicar,
+- en que camara ejecutar el ciclo,
+- cuando iniciar el ciclo,
+- a que pedido o linea de pedido asignar el resultado.
+
+## 6. Estructura de reglas recomendada
 
 ### Funcion objetivo
+Minimizar la suma de:
 
-- Que se optimiza.
-- Si se maximiza o minimiza.
-- Como se mide.
-
-### Variables de decision
-
-- Que puede elegir el modelo o algoritmo.
-- Que valores pueden tomar esas decisiones.
+- costo por atraso,
+- costo por faltante,
+- costo por producto madurado sin demanda asignada,
+- costo por sobre maduracion,
+- costo de uso de camaras,
+- costo de cambio de receta,
+- costo por perdida de valor del producto.
 
 ### Restricciones duras
 
-- Limites de capacidad.
-- Reglas de asignacion.
-- Dependencias temporales.
-- Restricciones de negocio.
+- capacidad maxima por camara,
+- compatibilidad receta-producto,
+- disponibilidad real del lote,
+- no superposicion invalida de uso de camara,
+- no superposicion invalida del mismo lote,
+- cumplimiento de reglas fisicas y operativas,
+- trazabilidad de asignacion entre lote y pedido.
 
-### Restricciones blandas
+### Alertas operativas
 
-- Preferencias.
-- Penalizaciones.
-- Criterios de balance.
+- over-ripening risk,
+- late completion risk,
+- early completion risk,
+- shortage risk,
+- excess ripened inventory risk,
+- recipe change required to meet due date.
 
-### Requisitos funcionales
+## 7. Como identificar reglas en el enunciado
 
-- Entradas esperadas.
-- Salidas esperadas.
-- Reglas de calculo obligatorias.
+### Frases que suelen indicar objetivo economico
 
-### Requisitos no funcionales
+- "queremos perder menos plata",
+- "el producto sobrante vale menos",
+- "hay que maximizar margen",
+- "hay que evitar desperdicio".
 
-- Tiempo de respuesta.
-- Escalabilidad.
-- Robustez.
-- Auditabilidad.
+### Frases que suelen indicar restriccion dura
 
-## 6. Checklist rapido
-Antes de cerrar el analisis, verificar:
+- "no puede exceder",
+- "solo se puede usar",
+- "debe cumplir",
+- "no se permite",
+- "como maximo".
 
-- Esta claro que se maximiza o minimiza?
-- Las restricciones duras estan separadas de las blandas?
-- Los requisitos estan diferenciados de las preferencias?
-- Las variables de decision estan explicitas?
-- Existe una forma concreta de comparar dos soluciones?
-- Se puede detectar facilmente cuando una solucion es invalida?
+### Frases que suelen indicar alerta o riesgo
 
-## 7. Ejemplo corto
+- "si pasa esto, hay que avisar",
+- "esto no deberia pasar",
+- "si ocurre, perdemos valor",
+- "es una excepcion operativa".
+
+## 8. Entidades de datos que soportan esta optimizacion
+Para que el problema pueda simularse bien, el modelo de datos deberia contemplar como minimo:
+
+- `products`,
+- `recipes`,
+- `ripening_chambers`,
+- `orders`,
+- `order_products`,
+- `batches`,
+- `ripening_runs`,
+- `order_allocations`,
+- `planning_alerts`.
+
+Tambien conviene separar:
+
+- tablas de importacion cruda desde Excel,
+- tablas normalizadas de negocio,
+- tablas de simulacion o resultados.
+
+## 9. Plantilla de analisis
+Usa esta estructura para describir cualquier nueva regla:
+
+### Regla
+Describir la regla en una frase.
+
+### Tipo
+
+- objetivo,
+- restriccion dura,
+- penalizacion,
+- alerta,
+- requisito funcional,
+- requisito de datos.
+
+### Impacto
+
+- que pasa si se cumple,
+- que pasa si se viola,
+- como afecta dinero, tiempo, calidad o capacidad.
+
+### Medicion
+
+- como se calcula,
+- en que tabla o campo se refleja,
+- como se compara entre escenarios.
+
+## 10. Ejemplo aplicado a banana
 Enunciado:
-"Asignar repartidores a pedidos minimizando el tiempo total de entrega, sin superar la capacidad de cada repartidor y priorizando clientes premium."
+"Debemos cumplir la fecha de entrega del pedido de banana, evitando dejar fruta madurada sin salida y usando la menor cantidad posible de camaras."
 
 Analisis:
 
-- Objetivo: minimizar el tiempo total de entrega.
-- Variables de decision: que repartidor atiende cada pedido.
-- Restriccion dura: no superar la capacidad de cada repartidor.
-- Restriccion blanda: priorizar clientes premium.
-- Requisito funcional: cada pedido debe quedar asignado.
-- Requisito no funcional: el calculo debe ser util en operacion real.
+- objetivo principal: minimizar perdida economica total,
+- penalizacion: atraso del pedido,
+- penalizacion: producto madurado sin demanda asignada,
+- restriccion dura: no exceder capacidad de camara,
+- restriccion dura: no usar mas cantidad de la disponible en el lote,
+- alerta: riesgo de sobre maduracion,
+- regla secundaria: usar menos camaras si no empeora el resultado economico.
 
-## 8. Regla practica final
-Si una condicion invalida la solucion, es una restriccion dura.
-Si una condicion mejora o empeora la solucion, es una restriccion blanda o criterio de optimizacion.
-Si una condicion describe lo que el sistema debe hacer o entregar, es un requisito.
+## 11. Checklist rapido
+Antes de cerrar el analisis, verificar:
+
+- esta claro donde vive la fecha objetivo?
+- esta claro que la demanda manda sobre el producto?
+- esta claro que el objetivo final es economico?
+- esta separada la restriccion dura de la penalizacion?
+- esta separada la penalizacion de la alerta?
+- esta modelado el riesgo de sobre maduracion?
+- esta modelado el exceso de producto madurado?
+- esta claro que usar menos camaras es un objetivo secundario?
+
+## 12. Regla practica final
+Si algo rompe fisicamente u operativamente el plan, es una restriccion dura.
+Si algo puede pasar pero hace perder plata, es una penalizacion economica.
+Si algo debe avisarse y monitorearse, es una alerta.
+Si una solucion gana mas dinero o pierde menos, es mejor.
