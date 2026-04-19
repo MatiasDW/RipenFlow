@@ -292,6 +292,15 @@ td {
   box-shadow: 0 10px 22px rgba(255, 255, 255, 0.08);
 }
 
+.primary-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.upload-actions {
+  align-items: center;
+}
+
 .selected-file {
   flex: 1;
   min-width: 0;
@@ -310,6 +319,20 @@ td {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.limits-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.limits-list span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 7px 12px;
+  color: var(--muted);
+  font-size: 0.84rem;
 }
 
 .field-chip {
