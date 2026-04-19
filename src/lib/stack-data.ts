@@ -31,7 +31,5 @@ const stackCards: StackCard[] = [
 ]
 
 export async function loadStackCards() {
-  await new Promise((resolve) => setTimeout(resolve, 180))
-
   return stackCards
 }

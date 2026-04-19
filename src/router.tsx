@@ -9,9 +9,11 @@ import { TanStackRouterDevtools } from '@tanstack/router-devtools'
 import { startTransition, useEffect, useId, useRef, useState } from 'react'
 
 import {
+  findMissingColumnKeys,
   formatBytes,
   type ParsedWorkbook,
   parsePurchaseFile,
+  purchaseFileLimits,
 } from '@/lib/purchase-file'
 import {
   buildChamberFill,
@@ -46,6 +48,37 @@ const scenarioOptions = [
     detail: 'Pushes fulfillment even if chamber cost increases.',
   },
 ] as const
+
+function formatRequiredFields(fieldNames: string[]) {
+  return fieldNames.join(', ')
+}
+
+function mergeWorkbookWarnings(workbook: ParsedWorkbook) {
+  const warnings = [...workbook.warnings]
+
+  for (const sheet of workbook.sheets) {
+    const missingFields = findMissingColumnKeys(
+      sheet.dataframe.columnKeys,
+      expectedFields,
+    )
+
+    if (missingFields.length > 0) {
+      warnings.push(
+        `Sheet "${sheet.name}" is missing expected columns: ${formatRequiredFields(missingFields)}.`,
+      )
+    }
+  }
+
+  return warnings
+}
+
+function getPreferredSheetIndex(workbook: ParsedWorkbook) {
+  return workbook.sheets.findIndex(
+    (sheet) =>
+      findMissingColumnKeys(sheet.dataframe.columnKeys, expectedFields).length ===
+      0,
+  )
+}
 
 function RootLayout() {
   return (
@@ -82,6 +115,7 @@ function RootLayout() {
 function HomePage() {
   const inputId = useId()
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const readRequestRef = useRef(0)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isReadingFile, setIsReadingFile] = useState(false)
   const [parsedWorkbook, setParsedWorkbook] = useState<ParsedWorkbook | null>(
@@ -108,7 +142,7 @@ function HomePage() {
     ? buildSimulationMetrics(simulationSummary, simulationProgress)
     : []
   const dataframePreview =
-    activeSheet?.dataframe.rows.slice(0, 4).map((row, index) => ({
+    activeSheet?.dataframe.sampleRows.map((row, index) => ({
       _row_number: index + 2,
       ...row,
     })) ?? []
@@ -154,18 +188,40 @@ function HomePage() {
       return
     }
 
+    const requestId = readRequestRef.current + 1
+    readRequestRef.current = requestId
     setIsReadingFile(true)
     setErrorMessage(null)
 
     try {
       const nextWorkbook = await parsePurchaseFile(file)
+      const preferredSheetIndex = getPreferredSheetIndex(nextWorkbook)
+
+      if (preferredSheetIndex === -1) {
+        throw new Error(
+          `No sheet contains all required columns: ${formatRequiredFields(expectedFields)}.`,
+        )
+      }
+
+      if (readRequestRef.current !== requestId) {
+        return
+      }
+
+      const workbookWithWarnings = {
+        ...nextWorkbook,
+        warnings: mergeWorkbookWarnings(nextWorkbook),
+      }
 
       startTransition(() => {
-        setParsedWorkbook(nextWorkbook)
-        setActiveSheetIndex(0)
+        setParsedWorkbook(workbookWithWarnings)
+        setActiveSheetIndex(preferredSheetIndex)
         setSimulationRunId((current) => current + 1)
       })
     } catch (error) {
+      if (readRequestRef.current !== requestId) {
+        return
+      }
+
       const message =
         error instanceof Error
           ? error.message
@@ -174,7 +230,9 @@ function HomePage() {
       setParsedWorkbook(null)
       setErrorMessage(message)
     } finally {
-      setIsReadingFile(false)
+      if (readRequestRef.current === requestId) {
+        setIsReadingFile(false)
+      }
     }
   }
 
@@ -226,9 +284,11 @@ function HomePage() {
               className="file-input"
               type="file"
               accept=".csv,.xls,.xlsx"
-              onChange={(event) =>
-                handleFileSelection(event.target.files?.[0] ?? null)
-              }
+              onChange={(event) => {
+                const nextFile = event.target.files?.[0] ?? null
+                event.currentTarget.value = ''
+                void handleFileSelection(nextFile)
+              }}
             />
 
             <p className="section-label">Source file</p>
@@ -238,13 +298,24 @@ function HomePage() {
               simulation lab updates automatically.
             </p>
 
+            <div className="limits-list" aria-label="Upload limits">
+              <span>Max {formatBytes(purchaseFileLimits.maxFileSizeBytes)}</span>
+              <span>Up to {purchaseFileLimits.maxSheets} sheets</span>
+              <span>Up to {purchaseFileLimits.maxRowsPerSheet} rows per sheet</span>
+              <span>Up to {purchaseFileLimits.maxTotalRows} total rows</span>
+              <span>
+                Up to {purchaseFileLimits.maxColumnsPerSheet} columns per sheet
+              </span>
+            </div>
+
             <div className="upload-actions">
               <button
                 className="primary-button"
                 type="button"
+                disabled={isReadingFile}
                 onClick={() => inputRef.current?.click()}
               >
-                Select purchase order file
+                {isReadingFile ? 'Reading file...' : 'Select purchase order file'}
               </button>
               <div className="selected-file">{selectedFileName}</div>
             </div>
@@ -302,6 +373,16 @@ function HomePage() {
               Rerun simulation
             </button>
           </div>
+
+          {parsedWorkbook.warnings.length > 0 ? (
+            <div className="alert alert-warning">
+              <ul className="warning-list">
+                {parsedWorkbook.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           <div className="scenario-strip">
             {scenarioOptions.map((scenario) => (
@@ -489,6 +570,7 @@ function HomePage() {
               <span>
                 Keys: {activeSheet?.dataframe.columnKeys.join(', ') || 'None'}
               </span>
+              <span>Total rows: {activeSheet?.dataframe.totalRows ?? 0}</span>
             </div>
 
             <pre className="code-preview">
