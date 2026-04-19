@@ -5,9 +5,9 @@
   "type": "module",
   "packageManager": "bun@1.3.12",
   "scripts": {
-    "dev": "$HOME/.bun/bin/bunx --bun vite",
-    "build": "$HOME/.bun/bin/bunx --bun tsc -b && $HOME/.bun/bin/bunx --bun vite build",
-    "preview": "$HOME/.bun/bin/bunx --bun vite preview",
+    "dev": "sh scripts/run-bunx.sh vite",
+    "build": "sh scripts/run-bunx.sh tsc -b && sh scripts/run-bunx.sh vite build",
+    "preview": "sh scripts/run-bunx.sh vite preview",
     "lint": "node scripts/run-biome.mjs check .",
     "format": "node scripts/run-biome.mjs format --write .",
     "db:generate": "drizzle-kit generate",
@@ -23,10 +23,12 @@
     "postgres": "^3.4.9",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
+    "xlsx": "^0.18.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.12",
+    "@rollup/rollup-linux-arm64-musl": "^4.60.2",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
