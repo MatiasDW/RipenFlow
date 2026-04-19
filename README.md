@@ -1,4 +1,4 @@
-# RipenFlow Madrid
+# RipenFlow
 
 Base lista para trabajar con:
 
@@ -19,7 +19,7 @@ Base lista para trabajar con:
 ```bash
 cp .env.example .env
 bun install
-bun dev
+bun run dev
 ```
 
 ## Produccion local
@@ -48,7 +48,8 @@ Servicios:
 - app: `http://localhost:5173`
 - postgres: `localhost:5432`
 
-La app dentro de Docker usa `DATABASE_URL=postgres://postgres@db:5432/ripenflow`.
+Docker Compose toma `POSTGRES_PASSWORD` desde tu entorno o usa `postgres` por defecto.
+La app dentro de Docker usa `DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD}@db:5432/ripenflow`.
 
 ## Scripts
 
@@ -68,7 +69,24 @@ bun run db:studio
 
 La configuracion de Drizzle vive en `drizzle.config.ts`.
 
-El schema inicial esta en `db/schema.ts` con una tabla `leads` de ejemplo.
+El schema inicial vive en `db/schema.ts` y define:
+
+- `purchase_order_imports`
+- `purchase_order_import_rows`
+
+Ese modelo acompana el flujo actual de intake para guardar archivos importados y sus filas normalizadas.
+
+## Intake de Excel/CSV
+
+La pantalla de carga valida:
+
+- extensiones `.csv`, `.xls`, `.xlsx`,
+- tamano maximo de archivo,
+- limite de hojas,
+- limite de filas y columnas,
+- y presencia de columnas requeridas como `required_date`, `quantity`, `price`, `amount` y `product`.
+
+Si el workbook trae hojas auxiliares, la app selecciona automaticamente la primera hoja que cumpla con las columnas esperadas y deja warnings para las demas.
 
 ## Railway
 
