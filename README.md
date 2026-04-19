@@ -22,6 +22,19 @@ bun install
 bun dev
 ```
 
+## Docker
+
+```bash
+docker compose up --build
+```
+
+Servicios:
+
+- app: `http://localhost:5173`
+- postgres: `localhost:5432`
+
+La app dentro de Docker usa `DATABASE_URL=postgres://postgres@db:5432/ripenflow`.
+
 ## Scripts
 
 ```bash
