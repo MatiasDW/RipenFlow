@@ -22,6 +22,21 @@ bun install
 bun dev
 ```
 
+## Produccion local
+
+```bash
+cp .env.example .env
+bun install
+bun run build
+bun run db:migrate:deploy
+bun run start
+```
+
+El server de produccion sirve el frontend compilado desde `dist/` y expone:
+
+- `GET /health`: healthcheck liviano del proceso
+- `GET /api/health`: verificacion de conectividad con PostgreSQL
+
 ## Docker
 
 ```bash
@@ -40,10 +55,12 @@ La app dentro de Docker usa `DATABASE_URL=postgres://postgres@db:5432/ripenflow`
 ```bash
 bun run dev
 bun run build
+bun run start
 bun run lint
 bun run format
 bun run db:generate
 bun run db:migrate
+bun run db:migrate:deploy
 bun run db:studio
 ```
 
@@ -52,6 +69,40 @@ bun run db:studio
 La configuracion de Drizzle vive en `drizzle.config.ts`.
 
 El schema inicial esta en `db/schema.ts` con una tabla `leads` de ejemplo.
+
+## Railway
+
+La app ya queda preparada para desplegarse con Railway usando el `Dockerfile` de la raiz.
+
+### Servicios recomendados
+
+- Un servicio web para esta app
+- Un servicio PostgreSQL administrado por Railway
+
+### Variables necesarias
+
+- `DATABASE_URL`
+- `DATABASE_MAX_CONNECTIONS`
+- `PORT`
+
+Railway inyecta `PORT` automaticamente al servicio web y entrega `DATABASE_URL` desde el servicio PostgreSQL.
+
+### Flujo recomendado
+
+1. Crear un proyecto en Railway.
+2. Agregar un servicio PostgreSQL.
+3. Agregar un servicio desde este repositorio.
+4. En el servicio web, referenciar `DATABASE_URL` desde el servicio PostgreSQL.
+5. Configurar el healthcheck del servicio web a `/health`.
+6. Desplegar.
+
+### Comportamiento del contenedor
+
+El contenedor de produccion:
+
+1. compila el frontend,
+2. corre las migraciones pendientes,
+3. levanta el server Bun en `0.0.0.0:$PORT`.
 
 ## Estructura
 
@@ -62,6 +113,10 @@ src/
   router.tsx
 db/
   client.ts
+  health.ts
+  migrate.ts
   schema.ts
   migrations/
+server/
+  index.ts
 ```

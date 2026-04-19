@@ -1,0 +1,5 @@
+required_date,quantity,price,amount,product,po_number,customer_name
+2026-04-22,1200,18.50,22200.00,banana,OC-1001,Fresh Market
+2026-04-23,800,18.50,14800.00,banana,OC-1002,Central Produce
+2026-04-24,1500,19.10,28650.00,banana,OC-1003,Tropical Foods
+2026-04-25,600,19.10,11460.00,banana,OC-1004,Retail Plus

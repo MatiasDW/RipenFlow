@@ -8,12 +8,13 @@ import * as schema from './schema'
 
 const envSchema = z.object({
   DATABASE_URL: z.url(),
+  DATABASE_MAX_CONNECTIONS: z.coerce.number().int().positive().default(5),
 })
 
 const env = envSchema.parse(process.env)
 
 export const sql = postgres(env.DATABASE_URL, {
-  max: 1,
+  max: env.DATABASE_MAX_CONNECTIONS,
 })
 
 export const db = drizzle(sql, {
