@@ -3,8 +3,6 @@
 .gitignore
 dist
 node_modules
-db/migrations
-Dockerfile*
 docker-compose*.yml
 npm-debug.log*
 *.local

@@ -4,7 +4,7 @@
     "target": "es2023",
     "lib": ["ES2023"],
     "module": "esnext",
-    "types": ["node"],
+    "types": ["node", "bun-types"],
     "skipLibCheck": true,
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
@@ -25,5 +25,10 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["vite.config.ts", "drizzle.config.ts", "db/**/*.ts"]
+  "include": [
+    "vite.config.ts",
+    "drizzle.config.ts",
+    "db/**/*.ts",
+    "server/**/*.ts"
+  ]
 }
