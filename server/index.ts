@@ -114,4 +114,6 @@ const server = Bun.serve({
   },
 })
 
-console.log(`RipenFlow server listening on http://${server.hostname}:${server.port}`)
+console.log(
+  `RipenFlow server listening on http://${server.hostname}:${server.port}`,
+)
