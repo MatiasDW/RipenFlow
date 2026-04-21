@@ -1,0 +1,13 @@
+required_date,product,quantity,price,amount,customer,order_reference,market,priority
+2026-04-22,Cavendish Premium 18kg,864,12.50,10800.00,Frutimax Retail,OC-450001,Chile,high
+2026-04-23,Cavendish Export 18kg,1296,11.80,15292.80,Andes Fresh,OC-450002,Peru,high
+2026-04-24,Banana Class I 20kg,540,13.10,7074.00,Pacific Market,OC-450003,Chile,medium
+2026-04-25,Cavendish Standard 18kg,2160,10.90,23544.00,Valle Sur Foods,OC-450004,Argentina,high
+2026-04-26,Organic Banana 18kg,756,12.20,9223.20,Patagonia Organics,OC-450005,Chile,medium
+2026-04-27,Cavendish Premium 18kg,1188,11.60,13780.80,Fresh Route,OC-450006,Uruguay,high
+2026-04-28,Banana Class I 20kg,432,13.40,5788.80,Maipo Distribucion,OC-450007,Chile,low
+2026-04-29,Cavendish Export 18kg,972,12.00,11664.00,Rio Azul Trading,OC-450008,Brazil,medium
+2026-04-30,Cavendish Standard 18kg,1458,11.40,16621.20,Puerto Norte,OC-450009,Chile,high
+2026-05-01,Organic Banana 18kg,648,12.90,8359.20,Green Shelf,OC-450010,Chile,medium
+2026-05-02,Cavendish Premium 18kg,1728,10.70,18489.60,Austral Foods,OC-450011,Paraguay,high
+2026-05-03,Banana Class I 20kg,810,12.30,9963.00,Central Mayorista,OC-450012,Chile,medium

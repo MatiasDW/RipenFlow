@@ -6,7 +6,14 @@ import {
   Outlet,
 } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/router-devtools'
-import { startTransition, useEffect, useId, useRef, useState } from 'react'
+import {
+  type PointerEvent,
+  startTransition,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+} from 'react'
 
 import {
   findMissingColumnKeys,
@@ -75,14 +82,47 @@ function mergeWorkbookWarnings(workbook: ParsedWorkbook) {
 function getPreferredSheetIndex(workbook: ParsedWorkbook) {
   return workbook.sheets.findIndex(
     (sheet) =>
-      findMissingColumnKeys(sheet.dataframe.columnKeys, expectedFields).length ===
-      0,
+      findMissingColumnKeys(sheet.dataframe.columnKeys, expectedFields)
+        .length === 0,
   )
 }
 
 function RootLayout() {
+  const shellRef = useRef<HTMLDivElement | null>(null)
+
+  function handlePointerMove(event: PointerEvent<HTMLDivElement>) {
+    const shell = shellRef.current
+
+    if (!shell) {
+      return
+    }
+
+    const bounds = shell.getBoundingClientRect()
+    const x = ((event.clientX - bounds.left) / bounds.width) * 100
+    const y = ((event.clientY - bounds.top) / bounds.height) * 100
+
+    shell.style.setProperty('--cursor-x', `${x}%`)
+    shell.style.setProperty('--cursor-y', `${y}%`)
+  }
+
+  function handlePointerLeave() {
+    const shell = shellRef.current
+
+    if (!shell) {
+      return
+    }
+
+    shell.style.setProperty('--cursor-x', '50%')
+    shell.style.setProperty('--cursor-y', '18%')
+  }
+
   return (
-    <div className="shell">
+    <div
+      ref={shellRef}
+      className="shell"
+      onPointerMove={handlePointerMove}
+      onPointerLeave={handlePointerLeave}
+    >
       <header className="hero">
         <div className="hero-topline">
           <p className="eyebrow">RipenFlow</p>
@@ -92,13 +132,37 @@ function RootLayout() {
         </div>
 
         <div className="hero-copy">
-          <div>
+          <div className="hero-copy-block">
             <h1>Demand to ripening simulation</h1>
             <p>
               Upload a purchase-order file, generate a live planning scenario
               and show the client how containers, pallets, chambers and due
               dates evolve in real time.
             </p>
+          </div>
+
+          <div className="hero-visual" aria-hidden="true">
+            <div className="hero-orbit">
+              <span className="hero-orb hero-orb-core" />
+              <span className="hero-orb hero-orb-aura" />
+              <span className="hero-ring hero-ring-1" />
+              <span className="hero-ring hero-ring-2" />
+            </div>
+
+            <div className="hero-spectrum">
+              <span className="spectrum-band spectrum-band-green" />
+              <span className="spectrum-band spectrum-band-lime" />
+              <span className="spectrum-band spectrum-band-gold" />
+              <span className="spectrum-band spectrum-band-amber" />
+            </div>
+
+            <div className="hero-caption">
+              <strong>Ripening rhythm</strong>
+              <span>
+                Planning layers move from intake to chamber readiness with a
+                single operational narrative.
+              </span>
+            </div>
           </div>
         </div>
       </header>
@@ -141,6 +205,7 @@ function HomePage() {
   const simulationMetrics = simulationSummary
     ? buildSimulationMetrics(simulationSummary, simulationProgress)
     : []
+  const workbookWarnings = parsedWorkbook?.warnings ?? []
   const dataframePreview =
     activeSheet?.dataframe.sampleRows.map((row, index) => ({
       _row_number: index + 2,
@@ -155,10 +220,10 @@ function HomePage() {
 
     const velocityByScenario =
       activeScenario === 'service'
-        ? 0.042
+        ? 0.028
         : activeScenario === 'margin'
-          ? 0.028
-          : 0.035
+          ? 0.02
+          : 0.024
     const currentRunId = simulationRunId
 
     setSimulationProgress(0)
@@ -178,7 +243,7 @@ function HomePage() {
 
         return nextProgress
       })
-    }, 180)
+    }, 220)
 
     return () => window.clearInterval(timer)
   }, [activeSheet, activeScenario, simulationRunId])
@@ -298,10 +363,14 @@ function HomePage() {
               simulation lab updates automatically.
             </p>
 
-            <div className="limits-list" aria-label="Upload limits">
-              <span>Max {formatBytes(purchaseFileLimits.maxFileSizeBytes)}</span>
+            <div className="limits-list">
+              <span>
+                Max {formatBytes(purchaseFileLimits.maxFileSizeBytes)}
+              </span>
               <span>Up to {purchaseFileLimits.maxSheets} sheets</span>
-              <span>Up to {purchaseFileLimits.maxRowsPerSheet} rows per sheet</span>
+              <span>
+                Up to {purchaseFileLimits.maxRowsPerSheet} rows per sheet
+              </span>
               <span>Up to {purchaseFileLimits.maxTotalRows} total rows</span>
               <span>
                 Up to {purchaseFileLimits.maxColumnsPerSheet} columns per sheet
@@ -315,7 +384,9 @@ function HomePage() {
                 disabled={isReadingFile}
                 onClick={() => inputRef.current?.click()}
               >
-                {isReadingFile ? 'Reading file...' : 'Select purchase order file'}
+                {isReadingFile
+                  ? 'Reading file...'
+                  : 'Select purchase order file'}
               </button>
               <div className="selected-file">{selectedFileName}</div>
             </div>
@@ -374,10 +445,10 @@ function HomePage() {
             </button>
           </div>
 
-          {parsedWorkbook.warnings.length > 0 ? (
+          {workbookWarnings.length > 0 ? (
             <div className="alert alert-warning">
               <ul className="warning-list">
-                {parsedWorkbook.warnings.map((warning) => (
+                {workbookWarnings.map((warning) => (
                   <li key={warning}>{warning}</li>
                 ))}
               </ul>
@@ -424,7 +495,7 @@ function HomePage() {
             {simulationMetrics.map((metric) => (
               <article
                 key={metric.label}
-                className={`metric-card ${metric.tone}`}
+                className={`metric-card ${metric.tone}${metric.tone === 'warning' ? ' has-issue' : ''}`}
               >
                 <p className="section-label">{metric.label}</p>
                 <strong>{metric.value}</strong>
@@ -445,26 +516,65 @@ function HomePage() {
 
               <div className="chamber-list">
                 {chamberFill.map((chamber) => (
-                  <article key={chamber.name} className="chamber-card">
+                  <article
+                    key={chamber.name}
+                    className={`chamber-card chamber-${chamber.status}${chamber.hasIssue ? ' has-issue' : ''}`}
+                  >
                     <div className="chamber-copy">
-                      <strong>{chamber.name}</strong>
-                      <span>{chamber.activeOrders} active order(s)</span>
+                      <div>
+                        <strong>{chamber.name}</strong>
+                        <span>{chamber.activeOrders} active order(s)</span>
+                      </div>
+                      {chamber.hasIssue ? (
+                        <span className="issue-pill">
+                          {chamber.lateRiskOrders > 0
+                            ? `${chamber.lateRiskOrders} late-risk`
+                            : 'Near capacity'}
+                        </span>
+                      ) : (
+                        <span className="status-pill">On plan</span>
+                      )}
                     </div>
-                    <div className="fill-track">
-                      <span
-                        className="fill-bar"
-                        style={{ width: `${chamber.occupancy}%` }}
-                      />
+                    <div className="chamber-visual" aria-hidden="true">
+                      <div className="chamber-frame">
+                        {Array.from({ length: 12 }, (_, index) => {
+                          const slotFill = (index + 1) * (100 / 12)
+                          const isFilled = chamber.occupancy >= slotFill
+
+                          return (
+                            <span
+                              key={`${chamber.name}-slot-${slotFill}`}
+                              className={
+                                isFilled
+                                  ? 'chamber-slot is-filled'
+                                  : 'chamber-slot'
+                              }
+                            />
+                          )
+                        })}
+                      </div>
+                      <div className="fill-track">
+                        <span
+                          className="fill-bar"
+                          style={{ width: `${chamber.occupancy}%` }}
+                        />
+                      </div>
                     </div>
                     <div className="fill-meta">
                       <span>{chamber.occupancy}% occupied</span>
+                      <span>
+                        {Math.max(0, 100 - chamber.occupancy)}% headroom
+                      </span>
                     </div>
+                    {chamber.issueNote ? (
+                      <p className="issue-copy">{chamber.issueNote}</p>
+                    ) : null}
                   </article>
                 ))}
               </div>
             </section>
 
-            <section className="subpanel">
+            <section className="subpanel snapshot-panel">
               <div className="subpanel-head">
                 <div>
                   <p className="section-label">Demand snapshot</p>
@@ -472,20 +582,73 @@ function HomePage() {
                 </div>
               </div>
 
+              <div className="snapshot-hero">
+                <div className="snapshot-stack">
+                  <div className="snapshot-visual snapshot-visual-containers">
+                    {Array.from(
+                      {
+                        length: Math.max(simulationSummary.totalContainers, 1),
+                      },
+                      (_, slotNumber) => slotNumber + 1,
+                    ).map((slotNumber) => (
+                      <span
+                        key={`container-${slotNumber}`}
+                        className="snapshot-unit is-container"
+                      />
+                    ))}
+                  </div>
+                  <div className="snapshot-visual snapshot-visual-pallets">
+                    {Array.from(
+                      { length: Math.min(simulationSummary.totalPallets, 18) },
+                      (_, slotNumber) => slotNumber + 1,
+                    ).map((slotNumber) => (
+                      <span
+                        key={`pallet-${slotNumber}`}
+                        className="snapshot-unit is-pallet"
+                      />
+                    ))}
+                  </div>
+                  <div className="snapshot-visual snapshot-visual-boxes">
+                    {Array.from(
+                      {
+                        length: Math.min(
+                          Math.ceil(simulationSummary.totalBoxes / 1200),
+                          18,
+                        ),
+                      },
+                      (_, slotNumber) => slotNumber + 1,
+                    ).map((slotNumber) => (
+                      <span
+                        key={`box-${slotNumber}`}
+                        className="snapshot-unit is-box"
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div className="snapshot-caption">
+                  <strong>Current load profile</strong>
+                  <span>
+                    Green blocks show the loaded planning footprint derived from
+                    the uploaded orders.
+                  </span>
+                </div>
+              </div>
+
               <div className="demand-stack">
-                <article className="demand-card">
+                <article className="demand-card demand-good">
                   <strong>{simulationSummary.totalBoxes}</strong>
                   <span>Boxes required</span>
                 </article>
-                <article className="demand-card">
+                <article className="demand-card demand-good">
                   <strong>{simulationSummary.totalPallets}</strong>
                   <span>Pallets estimated</span>
                 </article>
-                <article className="demand-card">
+                <article className="demand-card demand-good">
                   <strong>{simulationSummary.totalContainers}</strong>
                   <span>Containers filling</span>
                 </article>
-                <article className="demand-card">
+                <article className="demand-card demand-neutral">
                   <strong>{formatBytes(parsedWorkbook?.size ?? 0)}</strong>
                   <span>Uploaded file size</span>
                 </article>
@@ -493,13 +656,30 @@ function HomePage() {
             </section>
           </div>
 
-          <section className="subpanel">
+          <section className="subpanel calendar-panel">
             <div className="subpanel-head">
               <div>
                 <p className="section-label">Calendar view</p>
                 <h3>Order time frame by required date</h3>
               </div>
               <span>{timelineOrders.length} orders</span>
+            </div>
+
+            <div className="calendar-legend">
+              <p className="calendar-legend-title">
+                El calendario ya no usa gris ambiguo para ordenes sanas
+              </p>
+              <div className="calendar-legend-list">
+                <span className="calendar-legend-item legend-ready">
+                  ready ahora va en azul
+                </span>
+                <span className="calendar-legend-item legend-ripening">
+                  in_ripening queda en verde
+                </span>
+                <span className="calendar-legend-item legend-risk">
+                  late-risk sigue en rojo
+                </span>
+              </div>
             </div>
 
             <div className="calendar-shell">
@@ -541,7 +721,7 @@ function HomePage() {
                     ))}
 
                     <div
-                      className={`order-bar order-${order.scenarioStatus}`}
+                      className={`order-bar order-${order.scenarioStatus}${order.scenarioStatus === 'late_risk' ? ' has-issue' : ''}`}
                       style={{
                         gridColumn: `${order.startIndex + 2} / span ${order.span}`,
                         opacity: 0.35 + simulationProgress * 0.65,
@@ -555,6 +735,24 @@ function HomePage() {
                 ))}
               </div>
             </div>
+
+            {timelineOrders.some((order) => order.riskNote) ? (
+              <div className="calendar-insights">
+                {timelineOrders
+                  .filter((order) => order.riskNote)
+                  .map((order) => (
+                    <article key={`${order.id}-risk`} className="risk-card">
+                      <div className="risk-card-head">
+                        <strong>
+                          {order.product} · {order.chamberName}
+                        </strong>
+                        <span className="issue-pill">Late-risk</span>
+                      </div>
+                      <p>{order.riskNote}</p>
+                    </article>
+                  ))}
+              </div>
+            ) : null}
           </section>
 
           <section className="subpanel">

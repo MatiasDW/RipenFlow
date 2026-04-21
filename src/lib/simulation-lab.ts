@@ -51,6 +51,7 @@ export type DemandOrder = {
   amount: number
   startDate: string
   chamberName: string
+  riskNote: string | null
   scenarioStatus: 'queued' | 'in_ripening' | 'ready' | 'late_risk'
 }
 
@@ -76,6 +77,10 @@ export type ChamberFill = {
   name: string
   occupancy: number
   activeOrders: number
+  lateRiskOrders: number
+  issueNote: string | null
+  status: 'healthy' | 'issue'
+  hasIssue: boolean
 }
 
 export type TimelineOrder = DemandOrder & {
@@ -169,6 +174,12 @@ export function buildSimulationSummary(sheet: ParsedSheet): SimulationSummary {
 
     const pallets = Math.max(Math.ceil(quantityBoxes / BOXES_PER_PALLET), 1)
     const containers = Math.max(Math.ceil(pallets / PALLETS_PER_CONTAINER), 1)
+    const scenarioStatus =
+      cycleDays >= 6 ? 'late_risk' : cycleDays >= 4 ? 'in_ripening' : 'ready'
+    const riskNote =
+      scenarioStatus === 'late_risk'
+        ? `Requires a ${cycleDays}-day ripening cycle and leaves no recovery buffer before ${toIsoDate(dueDate)}.`
+        : null
 
     return {
       id: `order-${index + 1}`,
@@ -181,29 +192,34 @@ export function buildSimulationSummary(sheet: ParsedSheet): SimulationSummary {
       amount,
       startDate: toIsoDate(startDate),
       chamberName: `Chamber ${String.fromCharCode(65 + (index % 4))}`,
-      scenarioStatus:
-        cycleDays >= 6
-          ? 'late_risk'
-          : cycleDays >= 5
-            ? 'in_ripening'
-            : 'queued',
+      riskNote,
+      scenarioStatus,
     } satisfies DemandOrder
   })
 
-  const totalBoxes = orders.reduce((sum, order) => sum + order.quantityBoxes, 0)
-  const totalPallets = orders.reduce((sum, order) => sum + order.pallets, 0)
-  const totalContainers = orders.reduce(
-    (sum, order) => sum + order.containers,
+  const totalBoxes = orders.reduce(
+    (sum: number, order: DemandOrder) => sum + order.quantityBoxes,
     0,
   )
-  const totalRevenue = orders.reduce((sum, order) => sum + order.amount, 0)
+  const totalPallets = orders.reduce(
+    (sum: number, order: DemandOrder) => sum + order.pallets,
+    0,
+  )
+  const totalContainers = orders.reduce(
+    (sum: number, order: DemandOrder) => sum + order.containers,
+    0,
+  )
+  const totalRevenue = orders.reduce(
+    (sum: number, order: DemandOrder) => sum + order.amount,
+    0,
+  )
 
   const rangeStart = orders
-    .map((order) => new Date(order.startDate))
-    .sort((left, right) => left.getTime() - right.getTime())[0]
+    .map((order: DemandOrder) => new Date(order.startDate))
+    .sort((left: Date, right: Date) => left.getTime() - right.getTime())[0]
   const rangeEnd = orders
-    .map((order) => new Date(order.requiredDate))
-    .sort((left, right) => left.getTime() - right.getTime())
+    .map((order: DemandOrder) => new Date(order.requiredDate))
+    .sort((left: Date, right: Date) => left.getTime() - right.getTime())
     .at(-1)
 
   const dateRange: string[] = []
@@ -245,13 +261,15 @@ export function buildSimulationMetrics(
   const lateRiskOrders = summary.orders.filter(
     (order) => order.scenarioStatus === 'late_risk',
   ).length
+  const economicExposure = summary.totalRevenue * (1 - progress) * 0.18
 
   return [
     {
       label: 'Containers filling',
       value: `${filledContainers}/${summary.totalContainers}`,
       hint: 'Visible chamber load as the scenario progresses.',
-      tone: 'neutral',
+      tone:
+        filledContainers >= summary.totalContainers ? 'positive' : 'neutral',
     },
     {
       label: 'Pallets staged',
@@ -263,34 +281,62 @@ export function buildSimulationMetrics(
       label: 'Boxes assigned',
       value: `${fulfilledBoxes}/${summary.totalBoxes}`,
       hint: 'Demand allocation progressing against uploaded orders.',
-      tone: 'positive',
+      tone: fulfilledBoxes >= summary.totalBoxes ? 'positive' : 'neutral',
     },
     {
       label: 'Economic exposure',
-      value: formatCurrency(summary.totalRevenue * (1 - progress) * 0.18),
+      value: formatCurrency(economicExposure),
       hint: `${lateRiskOrders} order(s) still show due-date risk.`,
-      tone: lateRiskOrders > 0 ? 'warning' : 'neutral',
+      tone: economicExposure <= 0 ? 'positive' : 'warning',
     },
   ]
 }
 
 export function buildChamberFill(summary: SimulationSummary, progress: number) {
-  const grouped = new Map<string, { pallets: number; orders: number }>()
+  const grouped = new Map<
+    string,
+    {
+      pallets: number
+      orders: number
+      lateRiskOrders: number
+      issueNote: string | null
+    }
+  >()
 
   for (const order of summary.orders) {
-    const previous = grouped.get(order.chamberName) ?? { pallets: 0, orders: 0 }
+    const previous = grouped.get(order.chamberName) ?? {
+      pallets: 0,
+      orders: 0,
+      lateRiskOrders: 0,
+      issueNote: null,
+    }
 
     grouped.set(order.chamberName, {
       pallets: previous.pallets + order.pallets,
       orders: previous.orders + 1,
+      lateRiskOrders:
+        previous.lateRiskOrders +
+        (order.scenarioStatus === 'late_risk' ? 1 : 0),
+      issueNote: previous.issueNote ?? order.riskNote,
     })
   }
 
-  return [...grouped.entries()].map(([name, data]) => ({
-    name,
-    occupancy: Math.min(Math.round((data.pallets / 24) * 100 * progress), 100),
-    activeOrders: data.orders,
-  })) satisfies ChamberFill[]
+  return [...grouped.entries()].map(([name, data]) => {
+    const occupancy = Math.min(
+      Math.round((data.pallets / 24) * 100 * progress),
+      100,
+    )
+
+    return {
+      name,
+      occupancy,
+      activeOrders: data.orders,
+      lateRiskOrders: data.lateRiskOrders,
+      issueNote: data.issueNote,
+      status: data.lateRiskOrders > 0 ? 'issue' : 'healthy',
+      hasIssue: data.lateRiskOrders > 0,
+    }
+  }) satisfies ChamberFill[]
 }
 
 export function buildTimelineOrders(

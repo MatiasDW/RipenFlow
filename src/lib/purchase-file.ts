@@ -17,6 +17,7 @@ export type ParsedSheet = {
   }>
   dataframe: {
     columnKeys: string[]
+    rows: Array<Record<string, string>>
     sampleRows: Array<Record<string, string>>
     totalRows: number
   }
@@ -219,9 +220,8 @@ export async function parsePurchaseFile(file: File): Promise<ParsedWorkbook> {
       cells: row,
     }))
 
-    const dataframeSampleRows = rows
+    const dataframeRows = rows
       .slice(1)
-      .slice(0, DATAFRAME_SAMPLE_LIMIT)
       .map((row) =>
         Object.fromEntries(
           columns.map((column, columnIndex) => [
@@ -230,12 +230,14 @@ export async function parsePurchaseFile(file: File): Promise<ParsedWorkbook> {
           ]),
         ),
       )
+    const dataframeSampleRows = dataframeRows.slice(0, DATAFRAME_SAMPLE_LIMIT)
 
     return {
       name: sheetName,
       columns,
       dataframe: {
         columnKeys: columns.map((column) => column.key),
+        rows: dataframeRows,
         sampleRows: dataframeSampleRows,
         totalRows,
       },
