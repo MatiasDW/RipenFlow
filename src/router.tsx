@@ -15,6 +15,7 @@ import {
   useState,
 } from 'react'
 
+import { exportSimulationWorkbook } from '@/lib/export-simulation'
 import {
   findMissingColumnKeys,
   formatBytes,
@@ -56,8 +57,53 @@ const scenarioOptions = [
   },
 ] as const
 
+type UploadIssueModal = {
+  title: string
+  reasons: string[]
+}
+
 function formatRequiredFields(fieldNames: string[]) {
   return fieldNames.join(', ')
+}
+
+function buildUploadIssueModal(message: string): UploadIssueModal {
+  const reasons = [message]
+
+  if (message.includes('Solo se permiten archivos')) {
+    return {
+      title: 'Unsupported file type',
+      reasons: [
+        'The uploaded file is not a supported intake format.',
+        'Use `.csv`, `.xls` or `.xlsx`.',
+      ],
+    }
+  }
+
+  if (message.includes('No sheet contains all required columns')) {
+    return {
+      title: 'Missing required columns',
+      reasons: [
+        'None of the sheets contains the minimum columns expected by the simulation.',
+        message,
+      ],
+    }
+  }
+
+  if (
+    message.includes('supera el limite') ||
+    message.includes('limite operativo') ||
+    message.includes('no contiene hojas')
+  ) {
+    return {
+      title: 'The file does not match intake limits',
+      reasons,
+    }
+  }
+
+  return {
+    title: 'We could not process this file',
+    reasons,
+  }
 }
 
 function mergeWorkbookWarnings(workbook: ParsedWorkbook) {
@@ -187,6 +233,7 @@ function HomePage() {
   )
   const [activeSheetIndex, setActiveSheetIndex] = useState(0)
   const [activeScenario, setActiveScenario] = useState('balanced')
+  const [uploadIssue, setUploadIssue] = useState<UploadIssueModal | null>(null)
   const [simulationProgress, setSimulationProgress] = useState(0)
   const [simulationRunId, setSimulationRunId] = useState(0)
 
@@ -205,6 +252,9 @@ function HomePage() {
   const simulationMetrics = simulationSummary
     ? buildSimulationMetrics(simulationSummary, simulationProgress)
     : []
+  const activeScenarioOption =
+    scenarioOptions.find((scenario) => scenario.id === activeScenario) ??
+    scenarioOptions[0]
   const workbookWarnings = parsedWorkbook?.warnings ?? []
   const dataframePreview =
     activeSheet?.dataframe.sampleRows.map((row, index) => ({
@@ -257,6 +307,7 @@ function HomePage() {
     readRequestRef.current = requestId
     setIsReadingFile(true)
     setErrorMessage(null)
+    setUploadIssue(null)
 
     try {
       const nextWorkbook = await parsePurchaseFile(file)
@@ -294,6 +345,7 @@ function HomePage() {
 
       setParsedWorkbook(null)
       setErrorMessage(message)
+      setUploadIssue(buildUploadIssueModal(message))
     } finally {
       if (readRequestRef.current === requestId) {
         setIsReadingFile(false)
@@ -424,6 +476,76 @@ function HomePage() {
         ) : null}
       </section>
 
+      {uploadIssue ? (
+        <div className="modal-backdrop">
+          <button
+            aria-label="Close upload guidance"
+            className="modal-dismiss-layer"
+            type="button"
+            onClick={() => setUploadIssue(null)}
+          />
+          <section
+            className="modal-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="upload-issue-title"
+          >
+            <div className="modal-header">
+              <div>
+                <p className="section-label">Upload guidance</p>
+                <h2 id="upload-issue-title">{uploadIssue.title}</h2>
+              </div>
+              <button
+                className="ghost-link"
+                type="button"
+                onClick={() => setUploadIssue(null)}
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="modal-grid">
+              <article className="modal-card">
+                <p className="section-label">What we expect</p>
+                <ul className="bullet-list">
+                  <li>File type: `.csv`, `.xls` or `.xlsx`.</li>
+                  <li>
+                    Required columns: {formatRequiredFields(expectedFields)}.
+                  </li>
+                  <li>
+                    Maximum size:{' '}
+                    {formatBytes(purchaseFileLimits.maxFileSizeBytes)}.
+                  </li>
+                  <li>
+                    Maximum sheets: {purchaseFileLimits.maxSheets}. Maximum rows
+                    per sheet: {purchaseFileLimits.maxRowsPerSheet}.
+                  </li>
+                </ul>
+              </article>
+
+              <article className="modal-card">
+                <p className="section-label">Why this file failed</p>
+                <ul className="bullet-list">
+                  {uploadIssue.reasons.map((reason) => (
+                    <li key={reason}>{reason}</li>
+                  ))}
+                </ul>
+              </article>
+            </div>
+
+            <article className="modal-card modal-card-wide">
+              <p className="section-label">Expected header example</p>
+              <pre className="code-preview modal-code-preview">
+                <code>
+                  {`required_date,quantity,price,amount,product
+2026-04-22,864,12.50,10800.00,Cavendish Premium 18kg`}
+                </code>
+              </pre>
+            </article>
+          </section>
+        </div>
+      ) : null}
+
       {simulationSummary ? (
         <section className="panel simulation-panel">
           <div className="panel-header">
@@ -436,13 +558,37 @@ function HomePage() {
               </p>
             </div>
 
-            <button
-              className="ghost-link"
-              type="button"
-              onClick={() => setSimulationRunId((current) => current + 1)}
-            >
-              Rerun simulation
-            </button>
+            <div className="panel-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  if (!activeSheet) {
+                    return
+                  }
+
+                  exportSimulationWorkbook({
+                    activeSheet,
+                    chamberFill,
+                    fileName: selectedFileName,
+                    metrics: simulationMetrics,
+                    scenarioDetail: activeScenarioOption.detail,
+                    scenarioLabel: activeScenarioOption.label,
+                    summary: simulationSummary,
+                    timelineOrders,
+                  })
+                }}
+              >
+                Download result workbook
+              </button>
+              <button
+                className="ghost-link"
+                type="button"
+                onClick={() => setSimulationRunId((current) => current + 1)}
+              >
+                Rerun simulation
+              </button>
+            </div>
           </div>
 
           {workbookWarnings.length > 0 ? (
