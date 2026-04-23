@@ -61,6 +61,7 @@ export type DemandOrder = {
 export type SimulationSummary = {
   orders: DemandOrder[]
   chamberNames: string[]
+  unavailableChamberNames: string[]
   totalBoxes: number
   totalPallets: number
   totalContainers: number
@@ -85,6 +86,7 @@ export type ChamberFill = {
   issueNote: string | null
   status: 'healthy' | 'issue'
   hasIssue: boolean
+  isUnavailable: boolean
 }
 
 export type TimelineOrder = DemandOrder & {
@@ -260,6 +262,7 @@ export function buildSimulationSummary(
   sheet: ParsedSheet,
   options?: {
     chamberCount?: number
+    unavailableChambers?: string[]
   },
 ): SimulationSummary {
   const missingFields = Object.entries(fieldAliases)
@@ -272,7 +275,14 @@ export function buildSimulationSummary(
   const chamberNames = buildChamberNames(
     options?.chamberCount ?? DEFAULT_CHAMBER_COUNT,
   )
-  const chamberSchedules: ChamberSchedule[] = chamberNames.map((name) => ({
+  const unavailableChamberNames = chamberNames.filter((name) =>
+    (options?.unavailableChambers ?? []).includes(name),
+  )
+  const availableChamberNames =
+    unavailableChamberNames.length >= chamberNames.length
+      ? chamberNames.slice(0, 1)
+      : chamberNames.filter((name) => !unavailableChamberNames.includes(name))
+  const chamberSchedules: ChamberSchedule[] = availableChamberNames.map((name) => ({
     name,
     bookedPalletsByDay: new Map<string, number>(),
   }))
@@ -484,6 +494,7 @@ export function buildSimulationSummary(
   return {
     orders,
     chamberNames,
+    unavailableChamberNames,
     totalBoxes,
     totalPallets,
     totalContainers,
@@ -570,28 +581,39 @@ export function buildChamberFill(summary: SimulationSummary, progress: number) {
     })
   }
 
-  return summary.chamberNames.map((name) => {
+  return summary.chamberNames
+    .map((name) => {
+      const isUnavailable = summary.unavailableChamberNames.includes(name)
     const data = grouped.get(name) ?? {
       pallets: 0,
       orders: 0,
       lateRiskOrders: 0,
       issueNote: null,
     }
-    const occupancy = Math.min(
-      Math.round((data.pallets / PALLETS_PER_CHAMBER) * 100 * progress),
-      100,
-    )
+      const occupancy = isUnavailable
+        ? 100
+        : Math.min(
+            Math.round((data.pallets / PALLETS_PER_CHAMBER) * 100 * progress),
+            100,
+          )
 
-    return {
-      name,
-      occupancy,
-      activeOrders: data.orders,
-      lateRiskOrders: data.lateRiskOrders,
-      issueNote: data.issueNote,
-      status: data.lateRiskOrders > 0 ? 'issue' : 'healthy',
-      hasIssue: data.lateRiskOrders > 0,
-    }
-  }) satisfies ChamberFill[]
+      const status: ChamberFill['status'] =
+        isUnavailable || data.lateRiskOrders > 0 ? 'issue' : 'healthy'
+
+      return {
+        name,
+        occupancy,
+        activeOrders: data.orders,
+        lateRiskOrders: data.lateRiskOrders,
+        issueNote:
+          data.issueNote ??
+          (isUnavailable ? 'Marked as already occupied before this planning run.' : null),
+        status,
+        hasIssue: isUnavailable || data.lateRiskOrders > 0,
+        isUnavailable,
+      }
+    })
+    .filter((chamber) => chamber.activeOrders > 0 || chamber.isUnavailable) satisfies ChamberFill[]
 }
 
 export function buildTimelineOrders(

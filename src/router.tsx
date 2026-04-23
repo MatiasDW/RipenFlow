@@ -58,6 +58,7 @@ const scenarioOptions = [
 ] as const
 
 const chamberSettingsStorageKey = 'ripenflow:chamber-count'
+const unavailableChambersStorageKey = 'ripenflow:unavailable-chambers'
 const defaultChamberCount = 4
 const minChamberCount = 1
 const maxChamberCount = 12
@@ -245,10 +246,17 @@ function HomePage() {
   const [chamberCountInput, setChamberCountInput] = useState(
     String(defaultChamberCount),
   )
+  const [unavailableChambers, setUnavailableChambers] = useState<string[]>([])
+  const [unavailableChambersDraft, setUnavailableChambersDraft] = useState<
+    string[]
+  >([])
 
   const activeSheet = parsedWorkbook?.sheets[activeSheetIndex] ?? null
   const simulationSummary = activeSheet
-    ? buildSimulationSummary(activeSheet, { chamberCount })
+    ? buildSimulationSummary(activeSheet, {
+        chamberCount,
+        unavailableChambers,
+      })
     : null
   const selectedFileName = parsedWorkbook?.fileName ?? 'No file selected'
   const timelineOrders = simulationSummary
@@ -278,9 +286,20 @@ function HomePage() {
     ),
     maxChamberCount,
   )
+  const previewChamberNames = Array.from(
+    { length: normalizedChamberCount },
+    (_, index) => `Chamber ${String.fromCharCode(65 + index)}`,
+  )
   const hasPendingChamberCount =
     normalizedChamberCount !== chamberCount ||
     chamberCountInput !== String(chamberCount)
+  const normalizedUnavailableChambers = previewChamberNames.filter((name) =>
+    unavailableChambersDraft.includes(name),
+  )
+  const hasPendingUnavailableChambers =
+    normalizedUnavailableChambers.join('|') !== unavailableChambers.join('|')
+  const hasPendingChamberConfig =
+    hasPendingChamberCount || hasPendingUnavailableChambers
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -288,24 +307,30 @@ function HomePage() {
     }
 
     const storedValue = window.localStorage.getItem(chamberSettingsStorageKey)
-
-    if (!storedValue) {
-      return
-    }
-
-    const parsedValue = Number.parseInt(storedValue, 10)
-
-    if (!Number.isFinite(parsedValue)) {
-      return
-    }
-
-    const nextChamberCount = Math.min(
-      Math.max(parsedValue, minChamberCount),
-      maxChamberCount,
-    )
+    const parsedValue = storedValue ? Number.parseInt(storedValue, 10) : NaN
+    const nextChamberCount = Number.isFinite(parsedValue)
+      ? Math.min(Math.max(parsedValue, minChamberCount), maxChamberCount)
+      : defaultChamberCount
 
     setChamberCount(nextChamberCount)
     setChamberCountInput(String(nextChamberCount))
+
+    const storedUnavailable = window.localStorage.getItem(
+      unavailableChambersStorageKey,
+    )
+    const nextUnavailableChambers = storedUnavailable
+      ? storedUnavailable
+          .split('|')
+          .filter((value) =>
+            Array.from(
+              { length: nextChamberCount },
+              (_, index) => `Chamber ${String.fromCharCode(65 + index)}`,
+            ).includes(value),
+          )
+      : []
+
+    setUnavailableChambers(nextUnavailableChambers)
+    setUnavailableChambersDraft(nextUnavailableChambers)
   }, [])
 
   useEffect(() => {
@@ -401,9 +426,12 @@ function HomePage() {
 
   function handleSaveChamberCount() {
     const nextChamberCount = normalizedChamberCount
+    const nextUnavailableChambers = normalizedUnavailableChambers
 
     setChamberCount(nextChamberCount)
     setChamberCountInput(String(nextChamberCount))
+    setUnavailableChambers(nextUnavailableChambers)
+    setUnavailableChambersDraft(nextUnavailableChambers)
     setSimulationRunId((current) => current + 1)
 
     if (typeof window !== 'undefined') {
@@ -411,7 +439,19 @@ function HomePage() {
         chamberSettingsStorageKey,
         String(nextChamberCount),
       )
+      window.localStorage.setItem(
+        unavailableChambersStorageKey,
+        nextUnavailableChambers.join('|'),
+      )
     }
+  }
+
+  function handleToggleUnavailableChamber(chamberName: string) {
+    setUnavailableChambersDraft((current) =>
+      current.includes(chamberName)
+        ? current.filter((name) => name !== chamberName)
+        : [...current, chamberName].sort(),
+    )
   }
 
   return (
@@ -692,8 +732,9 @@ function HomePage() {
 
               <div className="chamber-config-bar">
                 <p className="chamber-config-copy">
-                  Show {chamberCount} configured chamber(s). Save the client
-                  setup to keep empty chambers visible too.
+                  Use only the chambers the client actually has available. Mark
+                  the ones already occupied so the scheduler skips them but
+                  still shows them in the run.
                 </p>
 
                 <div className="chamber-config-controls">
@@ -715,12 +756,34 @@ function HomePage() {
                   <button
                     className="secondary-button"
                     type="button"
-                    disabled={!hasPendingChamberCount}
+                    disabled={!hasPendingChamberConfig}
                     onClick={handleSaveChamberCount}
                   >
                     Save
                   </button>
                 </div>
+              </div>
+
+              <div className="chamber-toggle-row">
+                {previewChamberNames.map((chamberName) => (
+                  <button
+                    key={chamberName}
+                    className={
+                      unavailableChambersDraft.includes(chamberName)
+                        ? 'chamber-toggle is-active'
+                        : 'chamber-toggle'
+                    }
+                    type="button"
+                    onClick={() => handleToggleUnavailableChamber(chamberName)}
+                  >
+                    <strong>{chamberName}</strong>
+                    <span>
+                      {unavailableChambersDraft.includes(chamberName)
+                        ? 'Occupied'
+                        : 'Available'}
+                    </span>
+                  </button>
+                ))}
               </div>
 
               <div className="chamber-list">
@@ -736,7 +799,9 @@ function HomePage() {
                       </div>
                       {chamber.hasIssue ? (
                         <span className="issue-pill">
-                          {chamber.lateRiskOrders > 0
+                          {chamber.isUnavailable
+                            ? 'Occupied'
+                            : chamber.lateRiskOrders > 0
                             ? `${chamber.lateRiskOrders} late-risk`
                             : 'Near capacity'}
                         </span>
