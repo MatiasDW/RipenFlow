@@ -2,6 +2,9 @@ import type { ParsedSheet } from '@/lib/purchase-file'
 
 const BOXES_PER_PALLET = 54
 const PALLETS_PER_CONTAINER = 20
+const PALLETS_PER_CHAMBER = 24
+const CHAMBER_NAMES = ['Chamber A', 'Chamber B', 'Chamber C', 'Chamber D']
+const START_LOOKBACK_DAYS = 6
 
 const fieldAliases = {
   requiredDate: [
@@ -88,6 +91,11 @@ export type TimelineOrder = DemandOrder & {
   span: number
 }
 
+type ChamberSchedule = {
+  name: string
+  bookedPalletsByDay: Map<string, number>
+}
+
 function pickField(
   row: Record<string, string>,
   aliases: readonly string[],
@@ -126,6 +134,13 @@ function toIsoDate(date: Date) {
   return date.toISOString().slice(0, 10)
 }
 
+function addDays(date: Date, amount: number) {
+  const nextDate = new Date(date)
+  nextDate.setDate(nextDate.getDate() + amount)
+
+  return nextDate
+}
+
 function differenceInDays(start: Date, end: Date) {
   return Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
 }
@@ -138,6 +153,93 @@ function formatCurrency(value: number) {
   }).format(value)
 }
 
+function getPriorityWeight(priority: string) {
+  const normalizedPriority = priority.trim().toLowerCase()
+
+  if (normalizedPriority === 'high') {
+    return 3
+  }
+
+  if (normalizedPriority === 'medium') {
+    return 2
+  }
+
+  return 1
+}
+
+function buildCycleDays(product: string, pallets: number, quantityBoxes: number) {
+  let cycleDays = 3
+  const normalizedProduct = product.toLowerCase()
+
+  if (normalizedProduct.includes('organic')) {
+    cycleDays += 1
+  }
+
+  if (normalizedProduct.includes('export')) {
+    cycleDays += 1
+  }
+
+  if (normalizedProduct.includes('premium')) {
+    cycleDays += 1
+  }
+
+  if (pallets >= 20 || quantityBoxes >= 1080) {
+    cycleDays += 1
+  }
+
+  if (pallets >= 28 || quantityBoxes >= 1620) {
+    cycleDays += 1
+  }
+
+  return Math.min(cycleDays, 7)
+}
+
+function buildScheduleWindow(startDate: Date, endDate: Date) {
+  const windowDays: string[] = []
+  const cursor = new Date(startDate)
+
+  while (cursor <= endDate) {
+    windowDays.push(toIsoDate(cursor))
+    cursor.setDate(cursor.getDate() + 1)
+  }
+
+  return windowDays
+}
+
+function scoreChamberWindow(
+  chamber: ChamberSchedule,
+  windowDays: string[],
+  pallets: number,
+) {
+  let peakOccupancy = 0
+  let totalOccupancy = 0
+
+  for (const day of windowDays) {
+    const nextOccupancy = (chamber.bookedPalletsByDay.get(day) ?? 0) + pallets
+    peakOccupancy = Math.max(peakOccupancy, nextOccupancy)
+    totalOccupancy += nextOccupancy
+  }
+
+  return {
+    peakOccupancy,
+    totalOccupancy,
+    overflowPallets: Math.max(peakOccupancy - PALLETS_PER_CHAMBER, 0),
+  }
+}
+
+function reserveChamberWindow(
+  chamber: ChamberSchedule,
+  windowDays: string[],
+  pallets: number,
+) {
+  for (const day of windowDays) {
+    chamber.bookedPalletsByDay.set(
+      day,
+      (chamber.bookedPalletsByDay.get(day) ?? 0) + pallets,
+    )
+  }
+}
+
 export function buildSimulationSummary(sheet: ParsedSheet): SimulationSummary {
   const missingFields = Object.entries(fieldAliases)
     .filter(
@@ -146,56 +248,178 @@ export function buildSimulationSummary(sheet: ParsedSheet): SimulationSummary {
     )
     .map(([field]) => field)
 
-  const orders = sheet.dataframe.rows.map((row, index) => {
-    const quantityBoxes = Math.max(
-      parseNumericValue(pickField(row, fieldAliases.quantity, '0'), 0),
-      0,
-    )
-    const price = Math.max(
-      parseNumericValue(pickField(row, fieldAliases.price, '0'), 0),
-      0,
-    )
-    const amount = Math.max(
-      parseNumericValue(
-        pickField(row, fieldAliases.amount, String(quantityBoxes * price)),
-        quantityBoxes * price,
-      ),
-      0,
-    )
-    const product = pickField(row, fieldAliases.product, 'banana').toLowerCase()
-    const dueDate = parseDateValue(
-      pickField(row, fieldAliases.requiredDate, ''),
-      index + 2,
-    )
-    const cycleDays = 3 + (index % 4)
-    const startDate = new Date(dueDate)
+  const chamberSchedules: ChamberSchedule[] = CHAMBER_NAMES.map((name) => ({
+    name,
+    bookedPalletsByDay: new Map<string, number>(),
+  }))
 
-    startDate.setDate(dueDate.getDate() - cycleDays)
+  const orders = sheet.dataframe.rows
+    .map((row, index) => {
+      const quantityBoxes = Math.max(
+        parseNumericValue(pickField(row, fieldAliases.quantity, '0'), 0),
+        0,
+      )
+      const price = Math.max(
+        parseNumericValue(pickField(row, fieldAliases.price, '0'), 0),
+        0,
+      )
+      const amount = Math.max(
+        parseNumericValue(
+          pickField(row, fieldAliases.amount, String(quantityBoxes * price)),
+          quantityBoxes * price,
+        ),
+        0,
+      )
+      const product = pickField(row, fieldAliases.product, 'banana').toLowerCase()
+      const dueDate = parseDateValue(
+        pickField(row, fieldAliases.requiredDate, ''),
+        index + 2,
+      )
+      const pallets = Math.max(Math.ceil(quantityBoxes / BOXES_PER_PALLET), 1)
+      const containers = Math.max(
+        Math.ceil(pallets / PALLETS_PER_CONTAINER),
+        1,
+      )
 
-    const pallets = Math.max(Math.ceil(quantityBoxes / BOXES_PER_PALLET), 1)
-    const containers = Math.max(Math.ceil(pallets / PALLETS_PER_CONTAINER), 1)
-    const scenarioStatus =
-      cycleDays >= 6 ? 'late_risk' : cycleDays >= 4 ? 'in_ripening' : 'ready'
-    const riskNote =
-      scenarioStatus === 'late_risk'
-        ? `Requires a ${cycleDays}-day ripening cycle and leaves no recovery buffer before ${toIsoDate(dueDate)}.`
-        : null
+      return {
+        id: `order-${index + 1}`,
+        product,
+        dueDate,
+        quantityBoxes,
+        pallets,
+        containers,
+        price,
+        amount,
+        priorityWeight: getPriorityWeight(row.priority ?? ''),
+        cycleDays: buildCycleDays(product, pallets, quantityBoxes),
+      }
+    })
+    .sort((left, right) => {
+      const dueDateDelta = left.dueDate.getTime() - right.dueDate.getTime()
 
-    return {
-      id: `order-${index + 1}`,
-      product,
-      requiredDate: toIsoDate(dueDate),
-      quantityBoxes,
-      pallets,
-      containers,
-      price,
-      amount,
-      startDate: toIsoDate(startDate),
-      chamberName: `Chamber ${String.fromCharCode(65 + (index % 4))}`,
-      riskNote,
-      scenarioStatus,
-    } satisfies DemandOrder
-  })
+      if (dueDateDelta !== 0) {
+        return dueDateDelta
+      }
+
+      const priorityDelta = right.priorityWeight - left.priorityWeight
+
+      if (priorityDelta !== 0) {
+        return priorityDelta
+      }
+
+      return right.pallets - left.pallets
+    })
+    .map((order) => {
+      const preferredStartDate = addDays(order.dueDate, -order.cycleDays)
+      let bestPlan:
+        | {
+            chamber: ChamberSchedule
+            startDate: Date
+            windowDays: string[]
+            overflowPallets: number
+            lookbackDays: number
+            totalOccupancy: number
+          }
+        | null = null
+
+      for (
+        let lookbackDays = 0;
+        lookbackDays <= START_LOOKBACK_DAYS;
+        lookbackDays += 1
+      ) {
+        const candidateStartDate = addDays(preferredStartDate, -lookbackDays)
+        const candidateWindow = buildScheduleWindow(
+          candidateStartDate,
+          addDays(order.dueDate, -1),
+        )
+
+        for (const chamber of chamberSchedules) {
+          const score = scoreChamberWindow(
+            chamber,
+            candidateWindow,
+            order.pallets,
+          )
+          const candidatePlan = {
+            chamber,
+            startDate: candidateStartDate,
+            windowDays: candidateWindow,
+            overflowPallets: score.overflowPallets,
+            lookbackDays,
+            totalOccupancy: score.totalOccupancy,
+          }
+
+          if (!bestPlan) {
+            bestPlan = candidatePlan
+            continue
+          }
+
+          const candidateScore =
+            candidatePlan.overflowPallets * 1000 +
+            candidatePlan.lookbackDays * 40 +
+            candidatePlan.totalOccupancy
+          const bestScore =
+            bestPlan.overflowPallets * 1000 +
+            bestPlan.lookbackDays * 40 +
+            bestPlan.totalOccupancy
+
+          if (candidateScore < bestScore) {
+            bestPlan = candidatePlan
+          }
+        }
+
+        if (bestPlan && bestPlan.overflowPallets === 0) {
+          break
+        }
+      }
+
+      const finalPlan = bestPlan ?? {
+        chamber: chamberSchedules[0],
+        startDate: preferredStartDate,
+        windowDays: buildScheduleWindow(
+          preferredStartDate,
+          addDays(order.dueDate, -1),
+        ),
+        overflowPallets: 0,
+        lookbackDays: 0,
+        totalOccupancy: order.pallets,
+      }
+
+      reserveChamberWindow(
+        finalPlan.chamber,
+        finalPlan.windowDays,
+        order.pallets,
+      )
+
+      const scenarioStatus =
+        finalPlan.overflowPallets > 0
+          ? 'late_risk'
+          : order.cycleDays >= 5 || finalPlan.lookbackDays > 0
+            ? 'in_ripening'
+            : 'ready'
+      const riskNote =
+        finalPlan.overflowPallets > 0
+          ? `${finalPlan.chamber.name} exceeds nominal capacity by ${finalPlan.overflowPallets} pallet(s) before ${toIsoDate(order.dueDate)}.`
+          : finalPlan.lookbackDays > 0
+            ? `Pulled ${finalPlan.lookbackDays} day(s) earlier to keep ${finalPlan.chamber.name} within capacity before ${toIsoDate(order.dueDate)}.`
+            : order.cycleDays >= 6
+              ? `Requires a ${order.cycleDays}-day ripening cycle before ${toIsoDate(order.dueDate)}.`
+              : null
+
+      return {
+        id: order.id,
+        product: order.product,
+        requiredDate: toIsoDate(order.dueDate),
+        quantityBoxes: order.quantityBoxes,
+        pallets: order.pallets,
+        containers: order.containers,
+        price: order.price,
+        amount: order.amount,
+        startDate: toIsoDate(finalPlan.startDate),
+        chamberName: finalPlan.chamber.name,
+        riskNote,
+        scenarioStatus,
+      } satisfies DemandOrder
+    })
 
   const totalBoxes = orders.reduce(
     (sum: number, order: DemandOrder) => sum + order.quantityBoxes,
@@ -323,7 +547,7 @@ export function buildChamberFill(summary: SimulationSummary, progress: number) {
 
   return [...grouped.entries()].map(([name, data]) => {
     const occupancy = Math.min(
-      Math.round((data.pallets / 24) * 100 * progress),
+      Math.round((data.pallets / PALLETS_PER_CHAMBER) * 100 * progress),
       100,
     )
 
