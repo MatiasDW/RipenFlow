@@ -57,6 +57,11 @@ const scenarioOptions = [
   },
 ] as const
 
+const chamberSettingsStorageKey = 'ripenflow:chamber-count'
+const defaultChamberCount = 4
+const minChamberCount = 1
+const maxChamberCount = 12
+
 type UploadIssueModal = {
   title: string
   reasons: string[]
@@ -236,10 +241,14 @@ function HomePage() {
   const [uploadIssue, setUploadIssue] = useState<UploadIssueModal | null>(null)
   const [simulationProgress, setSimulationProgress] = useState(0)
   const [simulationRunId, setSimulationRunId] = useState(0)
+  const [chamberCount, setChamberCount] = useState(defaultChamberCount)
+  const [chamberCountInput, setChamberCountInput] = useState(
+    String(defaultChamberCount),
+  )
 
   const activeSheet = parsedWorkbook?.sheets[activeSheetIndex] ?? null
   const simulationSummary = activeSheet
-    ? buildSimulationSummary(activeSheet)
+    ? buildSimulationSummary(activeSheet, { chamberCount })
     : null
   const selectedFileName = parsedWorkbook?.fileName ?? 'No file selected'
   const timelineOrders = simulationSummary
@@ -261,6 +270,43 @@ function HomePage() {
       _row_number: index + 2,
       ...row,
     })) ?? []
+  const normalizedChamberCount = Math.min(
+    Math.max(
+      Number.parseInt(chamberCountInput.replaceAll(/[^0-9]/g, ''), 10) ||
+        defaultChamberCount,
+      minChamberCount,
+    ),
+    maxChamberCount,
+  )
+  const hasPendingChamberCount =
+    normalizedChamberCount !== chamberCount ||
+    chamberCountInput !== String(chamberCount)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const storedValue = window.localStorage.getItem(chamberSettingsStorageKey)
+
+    if (!storedValue) {
+      return
+    }
+
+    const parsedValue = Number.parseInt(storedValue, 10)
+
+    if (!Number.isFinite(parsedValue)) {
+      return
+    }
+
+    const nextChamberCount = Math.min(
+      Math.max(parsedValue, minChamberCount),
+      maxChamberCount,
+    )
+
+    setChamberCount(nextChamberCount)
+    setChamberCountInput(String(nextChamberCount))
+  }, [])
 
   useEffect(() => {
     if (!activeSheet) {
@@ -350,6 +396,21 @@ function HomePage() {
       if (readRequestRef.current === requestId) {
         setIsReadingFile(false)
       }
+    }
+  }
+
+  function handleSaveChamberCount() {
+    const nextChamberCount = normalizedChamberCount
+
+    setChamberCount(nextChamberCount)
+    setChamberCountInput(String(nextChamberCount))
+    setSimulationRunId((current) => current + 1)
+
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(
+        chamberSettingsStorageKey,
+        String(nextChamberCount),
+      )
     }
   }
 
@@ -619,37 +680,6 @@ function HomePage() {
             ))}
           </div>
 
-          <div className="stage-rail">
-            {simulationStages.map((stage) => (
-              <article
-                key={stage.id}
-                className={`stage-card stage-${stage.status}`}
-              >
-                <div className="stage-topline">
-                  <p className="section-label">{stage.label}</p>
-                  <span>{Math.round(stage.progress * 100)}%</span>
-                </div>
-                <div className="stage-progress">
-                  <span style={{ width: `${stage.progress * 100}%` }} />
-                </div>
-                <p>{stage.note}</p>
-              </article>
-            ))}
-          </div>
-
-          <div className="metric-grid">
-            {simulationMetrics.map((metric) => (
-              <article
-                key={metric.label}
-                className={`metric-card ${metric.tone}${metric.tone === 'warning' ? ' has-issue' : ''}`}
-              >
-                <p className="section-label">{metric.label}</p>
-                <strong>{metric.value}</strong>
-                <span>{metric.hint}</span>
-              </article>
-            ))}
-          </div>
-
           <div className="ops-grid">
             <section className="subpanel">
               <div className="subpanel-head">
@@ -658,6 +688,39 @@ function HomePage() {
                   <h3>Containers and pallets in motion</h3>
                 </div>
                 <span>{Math.round(simulationProgress * 100)}% complete</span>
+              </div>
+
+              <div className="chamber-config-bar">
+                <p className="chamber-config-copy">
+                  Show {chamberCount} configured chamber(s). Save the client
+                  setup to keep empty chambers visible too.
+                </p>
+
+                <div className="chamber-config-controls">
+                  <label className="chamber-count-field">
+                    <span>Chambers</span>
+                    <input
+                      className="chamber-count-input"
+                      type="number"
+                      min={minChamberCount}
+                      max={maxChamberCount}
+                      step={1}
+                      value={chamberCountInput}
+                      onChange={(event) =>
+                        setChamberCountInput(event.target.value)
+                      }
+                    />
+                  </label>
+
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={!hasPendingChamberCount}
+                    onClick={handleSaveChamberCount}
+                  >
+                    Save
+                  </button>
+                </div>
               </div>
 
               <div className="chamber-list">
@@ -678,7 +741,9 @@ function HomePage() {
                             : 'Near capacity'}
                         </span>
                       ) : (
-                        <span className="status-pill">On plan</span>
+                        <span className="status-pill">
+                          {chamber.activeOrders === 0 ? 'Available' : 'On plan'}
+                        </span>
                       )}
                     </div>
                     <div className="chamber-visual" aria-hidden="true">
@@ -800,6 +865,37 @@ function HomePage() {
                 </article>
               </div>
             </section>
+          </div>
+
+          <div className="stage-rail">
+            {simulationStages.map((stage) => (
+              <article
+                key={stage.id}
+                className={`stage-card stage-${stage.status}`}
+              >
+                <div className="stage-topline">
+                  <p className="section-label">{stage.label}</p>
+                  <span>{Math.round(stage.progress * 100)}%</span>
+                </div>
+                <div className="stage-progress">
+                  <span style={{ width: `${stage.progress * 100}%` }} />
+                </div>
+                <p>{stage.note}</p>
+              </article>
+            ))}
+          </div>
+
+          <div className="metric-grid">
+            {simulationMetrics.map((metric) => (
+              <article
+                key={metric.label}
+                className={`metric-card ${metric.tone}${metric.tone === 'warning' ? ' has-issue' : ''}`}
+              >
+                <p className="section-label">{metric.label}</p>
+                <strong>{metric.value}</strong>
+                <span>{metric.hint}</span>
+              </article>
+            ))}
           </div>
 
           <section className="subpanel calendar-panel">

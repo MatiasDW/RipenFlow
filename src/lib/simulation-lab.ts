@@ -3,7 +3,7 @@ import type { ParsedSheet } from '@/lib/purchase-file'
 const BOXES_PER_PALLET = 54
 const PALLETS_PER_CONTAINER = 20
 const PALLETS_PER_CHAMBER = 24
-const CHAMBER_NAMES = ['Chamber A', 'Chamber B', 'Chamber C', 'Chamber D']
+const DEFAULT_CHAMBER_COUNT = 4
 const START_LOOKBACK_DAYS = 6
 
 const fieldAliases = {
@@ -60,6 +60,7 @@ export type DemandOrder = {
 
 export type SimulationSummary = {
   orders: DemandOrder[]
+  chamberNames: string[]
   totalBoxes: number
   totalPallets: number
   totalContainers: number
@@ -240,7 +241,27 @@ function reserveChamberWindow(
   }
 }
 
-export function buildSimulationSummary(sheet: ParsedSheet): SimulationSummary {
+function getChamberName(index: number) {
+  if (index < 26) {
+    return `Chamber ${String.fromCharCode(65 + index)}`
+  }
+
+  return `Chamber ${index + 1}`
+}
+
+function buildChamberNames(chamberCount: number) {
+  return Array.from(
+    { length: Math.max(chamberCount, 1) },
+    (_, index) => getChamberName(index),
+  )
+}
+
+export function buildSimulationSummary(
+  sheet: ParsedSheet,
+  options?: {
+    chamberCount?: number
+  },
+): SimulationSummary {
   const missingFields = Object.entries(fieldAliases)
     .filter(
       ([, aliases]) =>
@@ -248,7 +269,10 @@ export function buildSimulationSummary(sheet: ParsedSheet): SimulationSummary {
     )
     .map(([field]) => field)
 
-  const chamberSchedules: ChamberSchedule[] = CHAMBER_NAMES.map((name) => ({
+  const chamberNames = buildChamberNames(
+    options?.chamberCount ?? DEFAULT_CHAMBER_COUNT,
+  )
+  const chamberSchedules: ChamberSchedule[] = chamberNames.map((name) => ({
     name,
     bookedPalletsByDay: new Map<string, number>(),
   }))
@@ -459,6 +483,7 @@ export function buildSimulationSummary(sheet: ParsedSheet): SimulationSummary {
 
   return {
     orders,
+    chamberNames,
     totalBoxes,
     totalPallets,
     totalContainers,
@@ -545,7 +570,13 @@ export function buildChamberFill(summary: SimulationSummary, progress: number) {
     })
   }
 
-  return [...grouped.entries()].map(([name, data]) => {
+  return summary.chamberNames.map((name) => {
+    const data = grouped.get(name) ?? {
+      pallets: 0,
+      orders: 0,
+      lateRiskOrders: 0,
+      issueNote: null,
+    }
     const occupancy = Math.min(
       Math.round((data.pallets / PALLETS_PER_CHAMBER) * 100 * progress),
       100,

@@ -584,6 +584,15 @@ td {
     0 0 28px rgba(111, 215, 156, 0.1);
 }
 
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 8px 18px rgba(0, 0, 0, 0.12);
+}
+
 .upload-actions {
   align-items: center;
 }
@@ -1007,6 +1016,69 @@ td {
 .chamber-list {
   display: grid;
   gap: 14px;
+}
+
+.chamber-config-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 1px solid rgba(127, 213, 159, 0.14);
+  border-radius: 18px;
+  background:
+    radial-gradient(
+      circle at top left,
+      rgba(111, 215, 156, 0.08),
+      transparent 38%
+    ),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent),
+    rgba(255, 255, 255, 0.025);
+}
+
+.chamber-config-copy {
+  margin: 0;
+  max-width: 32rem;
+  color: var(--muted);
+}
+
+.chamber-config-controls {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+
+.chamber-count-field {
+  display: grid;
+  gap: 8px;
+}
+
+.chamber-count-field span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.chamber-count-input {
+  width: 7rem;
+  padding: 12px 14px;
+  border: 1px solid rgba(127, 213, 159, 0.18);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent),
+    rgba(255, 255, 255, 0.03);
+  color: var(--accent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 10px 22px rgba(0, 0, 0, 0.12);
+}
+
+.chamber-count-input:focus {
+  outline: 1px solid rgba(127, 213, 159, 0.44);
+  border-color: rgba(127, 213, 159, 0.36);
 }
 
 .chamber-card,
@@ -1633,6 +1705,23 @@ th {
   }
 
   .selected-file {
+    width: 100%;
+  }
+
+  .chamber-config-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .chamber-config-controls {
+    width: 100%;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .chamber-count-field,
+  .chamber-count-input,
+  .chamber-config-controls .secondary-button {
     width: 100%;
   }
 }
