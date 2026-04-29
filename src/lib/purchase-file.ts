@@ -8,6 +8,23 @@ const MAX_SHEETS = 8
 const MAX_ROWS_PER_SHEET = 5000
 const MAX_TOTAL_ROWS = 12000
 const MAX_COLUMNS_PER_SHEET = 100
+const WIDE_MATRIX_REQUIRED_KEYS = [
+  'proveedor',
+  'madurador',
+  'centro',
+  'sku_familia',
+] as const
+const MATRIX_OUTPUT_COLUMNS = [
+  { key: 'required_date', label: 'required_date' },
+  { key: 'quantity', label: 'quantity' },
+  { key: 'product', label: 'product' },
+  { key: 'provider', label: 'provider' },
+  { key: 'ripener', label: 'ripener' },
+  { key: 'center', label: 'center' },
+  { key: 'sku_family', label: 'sku_family' },
+  { key: 'uom', label: 'uom' },
+  { key: 'source_sheet', label: 'source_sheet' },
+]
 
 export type ParsedSheet = {
   name: string
@@ -73,6 +90,126 @@ function normalizeColumnKey(label: string, index: number) {
     .replaceAll(/^_+|_+$/g, '')
 
   return normalized || `columna_${index + 1}`
+}
+
+function parseHeaderDate(label: string) {
+  const match = label.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+
+  if (!match) {
+    return null
+  }
+
+  const [, day, month, year] = match
+
+  return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+}
+
+function normalizeNumericText(value: string) {
+  return value.replaceAll(/\s/g, '').replace(',', '.')
+}
+
+function shouldUseRawHeaderValue(rawValue: string) {
+  return rawValue.includes('/') || /[a-zA-Z\u00C0-\u017F]/.test(rawValue)
+}
+
+function isDescriptionKey(columnKey: string) {
+  return (
+    columnKey === 'descripcion_sku' ||
+    columnKey === 'descripcia_n_sku' ||
+    (columnKey.startsWith('descrip') && columnKey.endsWith('_sku'))
+  )
+}
+
+function isPositiveQuantityCell(value: string) {
+  const normalized = normalizeNumericText(value)
+
+  if (!normalized) {
+    return false
+  }
+
+  const parsedValue = Number(normalized)
+
+  return Number.isFinite(parsedValue) && parsedValue > 0
+}
+
+function isDemandMatrixSheet(headerRow: string[]) {
+  const normalizedHeaderKeys = headerRow.map((label, index) =>
+    normalizeColumnKey(label, index),
+  )
+
+  const hasBaseColumns = WIDE_MATRIX_REQUIRED_KEYS.every((requiredKey) =>
+    normalizedHeaderKeys.includes(requiredKey),
+  )
+  const hasDescriptionColumn = normalizedHeaderKeys.some((columnKey) =>
+    isDescriptionKey(columnKey),
+  )
+  const hasDateColumns = headerRow.some((label) => parseHeaderDate(label))
+
+  return hasBaseColumns && hasDescriptionColumn && hasDateColumns
+}
+
+function buildDemandMatrixRows(
+  sheetName: string,
+  rows: string[][],
+): Array<Record<string, string>> {
+  const headerRow = rows[0] ?? []
+  const headerEntries = headerRow.map((label, index) => ({
+    index,
+    label,
+    key: normalizeColumnKey(label, index),
+    date: parseHeaderDate(label),
+  }))
+
+  const dateColumns = headerEntries.filter((entry) => entry.date)
+  const providerIndex = headerEntries.find(
+    (entry) => entry.key === 'proveedor',
+  )?.index
+  const ripenerIndex = headerEntries.find(
+    (entry) => entry.key === 'madurador',
+  )?.index
+  const centerIndex = headerEntries.find(
+    (entry) => entry.key === 'centro',
+  )?.index
+  const skuFamilyIndex = headerEntries.find(
+    (entry) => entry.key === 'sku_familia',
+  )?.index
+  const productIndex = headerEntries.find((entry) =>
+    isDescriptionKey(entry.key),
+  )?.index
+  const unitIndex = headerEntries.find((entry) => entry.key === 'umb')?.index
+
+  return rows.slice(1).flatMap((row) => {
+    const product = normalizeCell(row[productIndex ?? -1]).trim()
+    const center = normalizeCell(row[centerIndex ?? -1]).trim()
+    const provider = normalizeCell(row[providerIndex ?? -1]).trim()
+    const ripener = normalizeCell(row[ripenerIndex ?? -1]).trim()
+    const skuFamily = normalizeCell(row[skuFamilyIndex ?? -1]).trim()
+    const unit = normalizeCell(row[unitIndex ?? -1]).trim()
+
+    if (!product && !center && !provider && !ripener && !skuFamily) {
+      return []
+    }
+
+    return dateColumns.flatMap((column) => {
+      const quantity = normalizeCell(row[column.index]).trim()
+
+      if (!column.date || !isPositiveQuantityCell(quantity)) {
+        return []
+      }
+
+      return {
+        required_date: column.date,
+        quantity,
+        product,
+        provider,
+        ripener,
+        center,
+        sku_family: skuFamily,
+        uom: unit,
+        source_sheet: sheetName,
+      }
+    })
+  })
 }
 
 export function findMissingColumnKeys(
@@ -155,6 +292,14 @@ export async function parsePurchaseFile(file: File): Promise<ParsedWorkbook> {
 
   const sheets = workbook.SheetNames.map((sheetName) => {
     const worksheet = workbook.Sheets[sheetName]
+    const rawRows = XLSX.utils
+      .sheet_to_json<(string | number | boolean | Date)[]>(worksheet, {
+        header: 1,
+        raw: true,
+        defval: '',
+        blankrows: false,
+      })
+      .map((row) => row.map(normalizeCell))
     const rows = XLSX.utils
       .sheet_to_json<(string | number | boolean | Date)[]>(worksheet, {
         header: 1,
@@ -164,15 +309,34 @@ export async function parsePurchaseFile(file: File): Promise<ParsedWorkbook> {
       })
       .map((row) => row.map(normalizeCell))
 
+    const headerRow =
+      rows[0]?.map((formattedValue, index) => {
+        const rawValue = rawRows[0]?.[index] ?? ''
+
+        return shouldUseRawHeaderValue(rawValue) ? rawValue : formattedValue
+      }) ?? []
+    const usesDemandMatrixLayout = isDemandMatrixSheet(headerRow)
+    const normalizedRows = usesDemandMatrixLayout
+      ? buildDemandMatrixRows(sheetName, [headerRow, ...rows.slice(1)])
+      : null
+
     for (const warning of collectWorksheetWarnings(worksheet)) {
       warnings.add(warning)
+    }
+
+    if (usesDemandMatrixLayout) {
+      warnings.add(
+        `La hoja "${sheetName}" se interpreto como una matriz de demanda por fecha. Cada celda con cantidad > 0 se convirtio en una fila normalizada por centro y fecha.`,
+      )
     }
 
     const totalColumns = rows.reduce(
       (maxColumns, row) => Math.max(maxColumns, row.length),
       0,
     )
-    const totalRows = Math.max(rows.length - 1, 0)
+    const totalRows = usesDemandMatrixLayout
+      ? (normalizedRows?.length ?? 0)
+      : Math.max(rows.length - 1, 0)
 
     if (totalColumns > MAX_COLUMNS_PER_SHEET) {
       throw new Error(
@@ -195,41 +359,46 @@ export async function parsePurchaseFile(file: File): Promise<ParsedWorkbook> {
     }
 
     const seenKeys = new Map<string, number>()
-    const columns = Array.from({ length: totalColumns }, (_, index) => {
-      const label = rows[0]?.[index] || `Columna ${index + 1}`
-      const baseKey = normalizeColumnKey(label, index)
-      const seenCount = seenKeys.get(baseKey) ?? 0
-      const key = seenCount === 0 ? baseKey : `${baseKey}_${seenCount + 1}`
+    const columns = usesDemandMatrixLayout
+      ? MATRIX_OUTPUT_COLUMNS
+      : Array.from({ length: totalColumns }, (_, index) => {
+          const label = rows[0]?.[index] || `Columna ${index + 1}`
+          const baseKey = normalizeColumnKey(label, index)
+          const seenCount = seenKeys.get(baseKey) ?? 0
+          const key = seenCount === 0 ? baseKey : `${baseKey}_${seenCount + 1}`
 
-      if (seenCount > 0) {
-        warnings.add(
-          `La hoja "${sheetName}" tiene encabezados repetidos que normalizan a "${baseKey}". Se renombraron automaticamente para evitar colisiones.`,
-        )
-      }
+          if (seenCount > 0) {
+            warnings.add(
+              `La hoja "${sheetName}" tiene encabezados repetidos que normalizan a "${baseKey}". Se renombraron automaticamente para evitar colisiones.`,
+            )
+          }
 
-      seenKeys.set(baseKey, seenCount + 1)
+          seenKeys.set(baseKey, seenCount + 1)
 
-      return {
-        key,
-        label,
-      }
-    })
+          return {
+            key,
+            label,
+          }
+        })
 
-    const previewRows = rows.slice(1, PREVIEW_LIMIT + 1).map((row, index) => ({
-      rowNumber: index + 2,
-      cells: row,
-    }))
-
-    const dataframeRows = rows
-      .slice(1)
-      .map((row) =>
-        Object.fromEntries(
-          columns.map((column, columnIndex) => [
-            column.key,
-            normalizeCell(row[columnIndex]),
-          ]),
-        ),
-      )
+    const dataframeRows = normalizedRows
+      ? normalizedRows
+      : rows
+          .slice(1)
+          .map((row) =>
+            Object.fromEntries(
+              columns.map((column, columnIndex) => [
+                column.key,
+                normalizeCell(row[columnIndex]),
+              ]),
+            ),
+          )
+    const previewRows = dataframeRows
+      .slice(0, PREVIEW_LIMIT)
+      .map((row, index) => ({
+        rowNumber: index + 2,
+        cells: columns.map((column) => normalizeCell(row[column.key])),
+      }))
     const dataframeSampleRows = dataframeRows.slice(0, DATAFRAME_SAMPLE_LIMIT)
 
     return {

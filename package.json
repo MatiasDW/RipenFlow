@@ -13,8 +13,12 @@
     "format": "node scripts/run-biome.mjs format --write .",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:migrate:deploy": "bun run db/migrate.ts",
-    "db:studio": "drizzle-kit studio"
+    "db:push": "drizzle-kit push",
+    "db:migrate:deploy": "sh scripts/run-bun.sh run db/migrate.ts",
+    "db:seed:ripening-cycles": "sh scripts/run-bun.sh run db/seed-ripening-cycles.ts",
+    "db:bootstrap": "sh scripts/run-bun.sh run db:push && sh scripts/run-bun.sh run db:seed:ripening-cycles",
+    "db:studio": "drizzle-kit studio",
+    "cycles:extract": "sh scripts/run-bun.sh run scripts/extract-ripening-cycles.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.99.1",
