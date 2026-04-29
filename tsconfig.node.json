@@ -29,6 +29,7 @@
     "vite.config.ts",
     "drizzle.config.ts",
     "db/**/*.ts",
-    "server/**/*.ts"
+    "server/**/*.ts",
+    "scripts/**/*.ts"
   ]
 }

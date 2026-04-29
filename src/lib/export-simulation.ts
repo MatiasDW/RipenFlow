@@ -213,15 +213,16 @@ function addCalendarSheet(
   setColumns(worksheet, [
     14,
     26,
+    16,
     14,
     14,
     14,
     14,
     ...summary.dateRange.map(() => 13),
   ])
-  worksheet.views = [{ state: 'frozen', xSplit: 6, ySplit: 4 }]
+  worksheet.views = [{ state: 'frozen', xSplit: 7, ySplit: 4 }]
 
-  worksheet.mergeCells(1, 1, 1, 6 + summary.dateRange.length)
+  worksheet.mergeCells(1, 1, 1, 7 + summary.dateRange.length)
   worksheet.getCell('A1').value = 'Order Calendar'
   applyTitle(worksheet.getCell('A1'))
 
@@ -246,6 +247,7 @@ function addCalendarSheet(
   const header = [
     'Order ID',
     'Product',
+    'Center',
     'Chamber',
     'Status',
     'Required Date',
@@ -259,6 +261,7 @@ function addCalendarSheet(
     const row = worksheet.addRow([
       order.id,
       order.product,
+      order.center,
       order.chamberName,
       formatScenarioStatus(order.scenarioStatus),
       order.requiredDate,
@@ -302,11 +305,12 @@ function addOrdersSheet(
   summary: SimulationSummary,
 ) {
   const worksheet = workbook.addWorksheet('Order Results')
-  setColumns(worksheet, [14, 26, 14, 14, 14, 12, 12, 12, 12, 14, 14, 56])
+  setColumns(worksheet, [14, 26, 16, 18, 14, 14, 14, 12, 12, 12, 12, 14, 56])
 
   worksheet.addRow([
     'Order ID',
     'Product',
+    'Center',
     'Required Date',
     'Start Date',
     'Status',
@@ -324,6 +328,7 @@ function addOrdersSheet(
     const row = worksheet.addRow([
       order.id,
       order.product,
+      order.center,
       order.requiredDate,
       order.startDate,
       formatScenarioStatus(order.scenarioStatus),
@@ -393,15 +398,16 @@ function addChamberSheet(
 
 function addRiskSheet(workbook: ExcelJS.Workbook, summary: SimulationSummary) {
   const worksheet = workbook.addWorksheet('Risk Review')
-  setColumns(worksheet, [14, 24, 14, 14, 14, 12, 12, 56])
+  setColumns(worksheet, [14, 24, 16, 14, 14, 14, 12, 12, 56])
 
-  worksheet.mergeCells('A1:H1')
+  worksheet.mergeCells('A1:I1')
   worksheet.getCell('A1').value = 'Risk Review'
   applyTitle(worksheet.getCell('A1'))
 
   worksheet.addRow([
     'Order ID',
     'Product',
+    'Center',
     'Chamber',
     'Required Date',
     'Start Date',
@@ -417,6 +423,7 @@ function addRiskSheet(workbook: ExcelJS.Workbook, summary: SimulationSummary) {
       const row = worksheet.addRow([
         order.id,
         order.product,
+        order.center,
         order.chamberName,
         order.requiredDate,
         order.startDate,

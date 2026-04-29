@@ -584,8 +584,52 @@ td {
     0 0 28px rgba(111, 215, 156, 0.1);
 }
 
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 8px 18px rgba(0, 0, 0, 0.12);
+}
+
 .upload-actions {
   align-items: center;
+}
+
+.upload-summary {
+  display: grid;
+  gap: 6px;
+  padding: 16px 18px;
+  border: 1px solid rgba(127, 213, 159, 0.16);
+  border-radius: 18px;
+  background:
+    radial-gradient(
+      circle at top right,
+      rgba(127, 213, 159, 0.08),
+      transparent 42%
+    ),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent),
+    rgba(255, 255, 255, 0.03);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 12px 24px rgba(0, 0, 0, 0.14);
+}
+
+.upload-summary strong {
+  color: #f2f4ee;
+}
+
+.upload-summary span,
+.upload-summary p,
+.simulation-explainer {
+  margin: 0;
+  color: var(--muted);
+}
+
+.simulation-explainer {
+  margin-top: 10px;
+  max-width: 70ch;
 }
 
 .selected-file {
@@ -1009,6 +1053,127 @@ td {
   gap: 14px;
 }
 
+.chamber-config-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  border: 1px solid rgba(127, 213, 159, 0.14);
+  border-radius: 18px;
+  background:
+    radial-gradient(
+      circle at top left,
+      rgba(111, 215, 156, 0.08),
+      transparent 38%
+    ),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent),
+    rgba(255, 255, 255, 0.025);
+}
+
+.chamber-config-copy {
+  margin: 0;
+  max-width: 32rem;
+  color: var(--muted);
+}
+
+.chamber-config-controls {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+
+.chamber-count-field {
+  display: grid;
+  gap: 8px;
+}
+
+.chamber-count-field span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.chamber-count-input {
+  width: 7rem;
+  padding: 12px 14px;
+  border: 1px solid rgba(127, 213, 159, 0.18);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent),
+    rgba(255, 255, 255, 0.03);
+  color: var(--accent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 10px 22px rgba(0, 0, 0, 0.12);
+}
+
+.chamber-count-input:focus {
+  outline: 1px solid rgba(127, 213, 159, 0.44);
+  border-color: rgba(127, 213, 159, 0.36);
+}
+
+.chamber-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.chamber-toggle {
+  display: grid;
+  gap: 4px;
+  min-width: 8.2rem;
+  padding: 12px 14px;
+  border: 1px solid rgba(127, 213, 159, 0.12);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent),
+    rgba(255, 255, 255, 0.025);
+  text-align: left;
+  color: var(--muted);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 10px 20px rgba(0, 0, 0, 0.12);
+  transition:
+    transform 200ms ease,
+    border-color 200ms ease,
+    box-shadow 200ms ease,
+    background 200ms ease;
+}
+
+.chamber-toggle strong {
+  color: var(--accent);
+}
+
+.chamber-toggle span {
+  font-size: 0.84rem;
+}
+
+.chamber-toggle:hover {
+  transform: translateY(-1px);
+  border-color: rgba(127, 213, 159, 0.24);
+}
+
+.chamber-toggle.is-active {
+  border-color: rgba(255, 107, 107, 0.36);
+  background:
+    radial-gradient(
+      circle at top right,
+      rgba(255, 107, 107, 0.12),
+      transparent 36%
+    ),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent),
+    rgba(255, 86, 86, 0.06);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(255, 107, 107, 0.12),
+    0 12px 24px rgba(0, 0, 0, 0.14);
+}
+
 .chamber-card,
 .demand-card {
   border: 1px solid var(--border);
@@ -1258,9 +1423,36 @@ td {
 .calendar-shell {
   display: grid;
   gap: 10px;
-  overflow-x: auto;
+}
+
+.calendar-scroll {
+  overflow: auto;
+  max-width: 100%;
+  max-height: min(62vh, 760px);
   padding-bottom: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 18px;
   scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(127, 213, 159, 0.45) rgba(255, 255, 255, 0.06);
+}
+
+.calendar-scroll::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.calendar-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 999px;
+}
+
+.calendar-scroll::-webkit-scrollbar-thumb {
+  background:
+    linear-gradient(180deg, rgba(143, 224, 172, 0.46), rgba(44, 99, 72, 0.56)),
+    rgba(111, 215, 156, 0.28);
+  border: 2px solid rgba(12, 13, 15, 0.82);
+  border-radius: 999px;
 }
 
 .calendar-panel {
@@ -1452,20 +1644,20 @@ td {
 }
 
 .risk-card {
-  border: 1px solid rgba(255, 107, 107, 0.32);
+  border: 1px solid rgba(255, 107, 107, 0.18);
   border-radius: 18px;
   padding: 16px 18px;
   background:
     radial-gradient(
       circle at top right,
-      rgba(255, 86, 86, 0.12),
+      rgba(255, 86, 86, 0.08),
       transparent 34%
     ),
     linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent),
-    rgba(255, 86, 86, 0.06);
+    rgba(255, 86, 86, 0.04);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 0 0 1px rgba(255, 107, 107, 0.08),
+    0 0 0 1px rgba(255, 107, 107, 0.04),
     0 18px 30px rgba(0, 0, 0, 0.16);
 }
 
@@ -1633,6 +1825,28 @@ th {
   }
 
   .selected-file {
+    width: 100%;
+  }
+
+  .chamber-config-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .chamber-config-controls {
+    width: 100%;
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .chamber-toggle-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chamber-count-field,
+  .chamber-count-input,
+  .chamber-config-controls .secondary-button {
     width: 100%;
   }
 }

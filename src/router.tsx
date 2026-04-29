@@ -28,16 +28,9 @@ import {
   buildSimulationMetrics,
   buildSimulationSummary,
   buildTimelineOrders,
-  getSimulationStageState,
 } from '@/lib/simulation-lab'
 
-const expectedFields = [
-  'required_date',
-  'quantity',
-  'price',
-  'amount',
-  'product',
-]
+const expectedFields = ['required_date', 'quantity', 'product']
 
 const scenarioOptions = [
   {
@@ -57,9 +50,19 @@ const scenarioOptions = [
   },
 ] as const
 
+const chamberSettingsStorageKey = 'ripenflow:chamber-count'
+const unavailableChambersStorageKey = 'ripenflow:unavailable-chambers'
+const defaultChamberCount = 4
+const minChamberCount = 1
+const maxChamberCount = 12
+
 type UploadIssueModal = {
   title: string
   reasons: string[]
+}
+
+function formatCount(value: number, singular: string, plural: string) {
+  return `${value} ${value === 1 ? singular : plural}`
 }
 
 function formatRequiredFields(fieldNames: string[]) {
@@ -83,7 +86,8 @@ function buildUploadIssueModal(message: string): UploadIssueModal {
     return {
       title: 'Missing required columns',
       reasons: [
-        'None of the sheets contains the minimum columns expected by the simulation.',
+        'None of the sheets contains the minimum fields expected by the simulation.',
+        'We accept either a normalized file with required_date, quantity and product, or a planning matrix with base columns plus date columns.',
         message,
       ],
     }
@@ -236,16 +240,27 @@ function HomePage() {
   const [uploadIssue, setUploadIssue] = useState<UploadIssueModal | null>(null)
   const [simulationProgress, setSimulationProgress] = useState(0)
   const [simulationRunId, setSimulationRunId] = useState(0)
+  const [chamberCount, setChamberCount] = useState(defaultChamberCount)
+  const [chamberCountInput, setChamberCountInput] = useState(
+    String(defaultChamberCount),
+  )
+  const [unavailableChambers, setUnavailableChambers] = useState<string[]>([])
+  const [unavailableChambersDraft, setUnavailableChambersDraft] = useState<
+    string[]
+  >([])
 
   const activeSheet = parsedWorkbook?.sheets[activeSheetIndex] ?? null
   const simulationSummary = activeSheet
-    ? buildSimulationSummary(activeSheet)
+    ? buildSimulationSummary(activeSheet, {
+        chamberCount,
+        scenarioId: activeScenario,
+        unavailableChambers,
+      })
     : null
   const selectedFileName = parsedWorkbook?.fileName ?? 'No file selected'
   const timelineOrders = simulationSummary
     ? buildTimelineOrders(simulationSummary)
     : []
-  const simulationStages = getSimulationStageState(simulationProgress)
   const chamberFill = simulationSummary
     ? buildChamberFill(simulationSummary, simulationProgress)
     : []
@@ -256,11 +271,66 @@ function HomePage() {
     scenarioOptions.find((scenario) => scenario.id === activeScenario) ??
     scenarioOptions[0]
   const workbookWarnings = parsedWorkbook?.warnings ?? []
+  const detectedOrderCount = activeSheet?.dataframe.totalRows ?? 0
   const dataframePreview =
     activeSheet?.dataframe.sampleRows.map((row, index) => ({
       _row_number: index + 2,
       ...row,
     })) ?? []
+  const normalizedChamberCount = Math.min(
+    Math.max(
+      Number.parseInt(chamberCountInput.replaceAll(/[^0-9]/g, ''), 10) ||
+        defaultChamberCount,
+      minChamberCount,
+    ),
+    maxChamberCount,
+  )
+  const previewChamberNames = Array.from(
+    { length: normalizedChamberCount },
+    (_, index) => `Chamber ${String.fromCharCode(65 + index)}`,
+  )
+  const hasPendingChamberCount =
+    normalizedChamberCount !== chamberCount ||
+    chamberCountInput !== String(chamberCount)
+  const normalizedUnavailableChambers = previewChamberNames.filter((name) =>
+    unavailableChambersDraft.includes(name),
+  )
+  const hasPendingUnavailableChambers =
+    normalizedUnavailableChambers.join('|') !== unavailableChambers.join('|')
+  const hasPendingChamberConfig =
+    hasPendingChamberCount || hasPendingUnavailableChambers
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const storedValue = window.localStorage.getItem(chamberSettingsStorageKey)
+    const parsedValue = storedValue ? Number.parseInt(storedValue, 10) : NaN
+    const nextChamberCount = Number.isFinite(parsedValue)
+      ? Math.min(Math.max(parsedValue, minChamberCount), maxChamberCount)
+      : defaultChamberCount
+
+    setChamberCount(nextChamberCount)
+    setChamberCountInput(String(nextChamberCount))
+
+    const storedUnavailable = window.localStorage.getItem(
+      unavailableChambersStorageKey,
+    )
+    const nextUnavailableChambers = storedUnavailable
+      ? storedUnavailable
+          .split('|')
+          .filter((value) =>
+            Array.from(
+              { length: nextChamberCount },
+              (_, index) => `Chamber ${String.fromCharCode(65 + index)}`,
+            ).includes(value),
+          )
+      : []
+
+    setUnavailableChambers(nextUnavailableChambers)
+    setUnavailableChambersDraft(nextUnavailableChambers)
+  }, [])
 
   useEffect(() => {
     if (!activeSheet) {
@@ -353,6 +423,36 @@ function HomePage() {
     }
   }
 
+  function handleSaveChamberCount() {
+    const nextChamberCount = normalizedChamberCount
+    const nextUnavailableChambers = normalizedUnavailableChambers
+
+    setChamberCount(nextChamberCount)
+    setChamberCountInput(String(nextChamberCount))
+    setUnavailableChambers(nextUnavailableChambers)
+    setUnavailableChambersDraft(nextUnavailableChambers)
+    setSimulationRunId((current) => current + 1)
+
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(
+        chamberSettingsStorageKey,
+        String(nextChamberCount),
+      )
+      window.localStorage.setItem(
+        unavailableChambersStorageKey,
+        nextUnavailableChambers.join('|'),
+      )
+    }
+  }
+
+  function handleToggleUnavailableChamber(chamberName: string) {
+    setUnavailableChambersDraft((current) =>
+      current.includes(chamberName)
+        ? current.filter((name) => name !== chamberName)
+        : [...current, chamberName].sort(),
+    )
+  }
+
   return (
     <div className="workspace">
       <section className="panel marquee-panel">
@@ -388,6 +488,8 @@ function HomePage() {
             <p className="panel-copy">
               Load `.csv`, `.xls` or `.xlsx`. We interpret the first row as
               headers and generate a client-facing planning view immediately.
+              Wide demand matrices with one column per date are normalized
+              automatically.
             </p>
           </div>
           <span className="pill">{isReadingFile ? 'Reading' : 'Ready'}</span>
@@ -445,8 +547,27 @@ function HomePage() {
 
             <div className="upload-hint">
               Visible assumptions: quantity is treated as boxes, then converted
-              into pallets and containers for the simulation view.
+              into pallets and containers for the simulation view. If the file
+              comes as a demand matrix, each non-zero date cell becomes one
+              order line.
             </div>
+
+            {parsedWorkbook ? (
+              <div className="upload-summary">
+                <strong>1 file loaded</strong>
+                <span>
+                  {formatCount(
+                    detectedOrderCount,
+                    'order row detected',
+                    'order rows detected',
+                  )}
+                </span>
+                <p>
+                  The planner treats each data row in the uploaded file as a
+                  separate order line. One CSV can contain many orders.
+                </p>
+              </div>
+            ) : null}
           </div>
 
           <aside className="brief-column">
@@ -454,7 +575,10 @@ function HomePage() {
               <p className="section-label">Simulation framing</p>
               <ul className="bullet-list">
                 <li>Economic performance is the main objective.</li>
-                <li>Demand dates belong to orders, not products.</li>
+                <li>Demand can arrive as one date column per required day.</li>
+                <li>
+                  Each non-zero cell becomes a dated order line per center.
+                </li>
                 <li>Planning must happen on batches and chambers.</li>
                 <li>Late, surplus and over-ripening risk stay visible.</li>
               </ul>
@@ -510,7 +634,13 @@ function HomePage() {
                 <ul className="bullet-list">
                   <li>File type: `.csv`, `.xls` or `.xlsx`.</li>
                   <li>
-                    Required columns: {formatRequiredFields(expectedFields)}.
+                    Minimum normalized fields:{' '}
+                    {formatRequiredFields(expectedFields)}.
+                  </li>
+                  <li>
+                    Also accepted: planning matrix with `Proveedor`,
+                    `Madurador`, `Centro`, `SKU Familia`, `Descripcion SKU` and
+                    one or more date columns.
                   </li>
                   <li>
                     Maximum size:{' '}
@@ -537,8 +667,8 @@ function HomePage() {
               <p className="section-label">Expected header example</p>
               <pre className="code-preview modal-code-preview">
                 <code>
-                  {`required_date,quantity,price,amount,product
-2026-04-22,864,12.50,10800.00,Cavendish Premium 18kg`}
+                  {`required_date,quantity,product
+2026-04-22,864,Cavendish Premium 18kg`}
                 </code>
               </pre>
             </article>
@@ -555,6 +685,15 @@ function HomePage() {
               <p className="panel-copy">
                 Run a client-facing scenario with visible movement, operational
                 load and due-date exposure.
+              </p>
+              <p className="simulation-explainer">
+                {selectedFileName} generated{' '}
+                {formatCount(
+                  detectedOrderCount,
+                  'simulated order line',
+                  'simulated order lines',
+                )}
+                . The planner does not treat the whole file as one order.
               </p>
             </div>
 
@@ -619,37 +758,6 @@ function HomePage() {
             ))}
           </div>
 
-          <div className="stage-rail">
-            {simulationStages.map((stage) => (
-              <article
-                key={stage.id}
-                className={`stage-card stage-${stage.status}`}
-              >
-                <div className="stage-topline">
-                  <p className="section-label">{stage.label}</p>
-                  <span>{Math.round(stage.progress * 100)}%</span>
-                </div>
-                <div className="stage-progress">
-                  <span style={{ width: `${stage.progress * 100}%` }} />
-                </div>
-                <p>{stage.note}</p>
-              </article>
-            ))}
-          </div>
-
-          <div className="metric-grid">
-            {simulationMetrics.map((metric) => (
-              <article
-                key={metric.label}
-                className={`metric-card ${metric.tone}${metric.tone === 'warning' ? ' has-issue' : ''}`}
-              >
-                <p className="section-label">{metric.label}</p>
-                <strong>{metric.value}</strong>
-                <span>{metric.hint}</span>
-              </article>
-            ))}
-          </div>
-
           <div className="ops-grid">
             <section className="subpanel">
               <div className="subpanel-head">
@@ -658,6 +766,62 @@ function HomePage() {
                   <h3>Containers and pallets in motion</h3>
                 </div>
                 <span>{Math.round(simulationProgress * 100)}% complete</span>
+              </div>
+
+              <div className="chamber-config-bar">
+                <p className="chamber-config-copy">
+                  Use only the chambers the client actually has available. Mark
+                  the ones already occupied so the scheduler skips them but
+                  still shows them in the run.
+                </p>
+
+                <div className="chamber-config-controls">
+                  <label className="chamber-count-field">
+                    <span>Chambers</span>
+                    <input
+                      className="chamber-count-input"
+                      type="number"
+                      min={minChamberCount}
+                      max={maxChamberCount}
+                      step={1}
+                      value={chamberCountInput}
+                      onChange={(event) =>
+                        setChamberCountInput(event.target.value)
+                      }
+                    />
+                  </label>
+
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={!hasPendingChamberConfig}
+                    onClick={handleSaveChamberCount}
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+
+              <div className="chamber-toggle-row">
+                {previewChamberNames.map((chamberName) => (
+                  <button
+                    key={chamberName}
+                    className={
+                      unavailableChambersDraft.includes(chamberName)
+                        ? 'chamber-toggle is-active'
+                        : 'chamber-toggle'
+                    }
+                    type="button"
+                    onClick={() => handleToggleUnavailableChamber(chamberName)}
+                  >
+                    <strong>{chamberName}</strong>
+                    <span>
+                      {unavailableChambersDraft.includes(chamberName)
+                        ? 'Occupied'
+                        : 'Available'}
+                    </span>
+                  </button>
+                ))}
               </div>
 
               <div className="chamber-list">
@@ -669,16 +833,26 @@ function HomePage() {
                     <div className="chamber-copy">
                       <div>
                         <strong>{chamber.name}</strong>
-                        <span>{chamber.activeOrders} active order(s)</span>
+                        <span>
+                          {formatCount(
+                            chamber.activeOrders,
+                            'assigned order line',
+                            'assigned order lines',
+                          )}
+                        </span>
                       </div>
                       {chamber.hasIssue ? (
                         <span className="issue-pill">
-                          {chamber.lateRiskOrders > 0
-                            ? `${chamber.lateRiskOrders} late-risk`
-                            : 'Near capacity'}
+                          {chamber.isUnavailable
+                            ? 'Occupied'
+                            : chamber.lateRiskOrders > 0
+                              ? `${chamber.lateRiskOrders} late-risk`
+                              : 'Near capacity'}
                         </span>
                       ) : (
-                        <span className="status-pill">On plan</span>
+                        <span className="status-pill">
+                          {chamber.activeOrders === 0 ? 'Available' : 'On plan'}
+                        </span>
                       )}
                     </div>
                     <div className="chamber-visual" aria-hidden="true">
@@ -802,6 +976,19 @@ function HomePage() {
             </section>
           </div>
 
+          <div className="metric-grid">
+            {simulationMetrics.map((metric) => (
+              <article
+                key={metric.label}
+                className={`metric-card ${metric.tone}${metric.tone === 'warning' ? ' has-issue' : ''}`}
+              >
+                <p className="section-label">{metric.label}</p>
+                <strong>{metric.value}</strong>
+                <span>{metric.hint}</span>
+              </article>
+            ))}
+          </div>
+
           <section className="subpanel calendar-panel">
             <div className="subpanel-head">
               <div>
@@ -829,68 +1016,76 @@ function HomePage() {
             </div>
 
             <div className="calendar-shell">
-              <div
-                className="calendar-grid calendar-header"
-                style={{
-                  gridTemplateColumns: `220px repeat(${simulationSummary.dateRange.length}, minmax(90px, 1fr))`,
-                }}
-              >
-                <div className="calendar-cell calendar-label">Order</div>
-                {simulationSummary.dateRange.map((date) => (
-                  <div key={date} className="calendar-cell">
-                    {date.slice(5)}
-                  </div>
-                ))}
-              </div>
-
-              <div className="calendar-body">
-                {timelineOrders.map((order) => (
-                  <div
-                    key={order.id}
-                    className="calendar-grid calendar-row"
-                    style={{
-                      gridTemplateColumns: `220px repeat(${simulationSummary.dateRange.length}, minmax(90px, 1fr))`,
-                    }}
-                  >
-                    <div className="calendar-cell calendar-order">
-                      <strong>{order.product}</strong>
-                      <span>
-                        {order.quantityBoxes} boxes · {order.pallets} pallets
-                      </span>
+              <div className="calendar-scroll">
+                <div
+                  className="calendar-grid calendar-header"
+                  style={{
+                    gridTemplateColumns: `220px repeat(${simulationSummary.dateRange.length}, minmax(90px, 1fr))`,
+                  }}
+                >
+                  <div className="calendar-cell calendar-label">Order</div>
+                  {simulationSummary.dateRange.map((date) => (
+                    <div key={date} className="calendar-cell">
+                      {date.slice(5)}
                     </div>
+                  ))}
+                </div>
 
-                    {simulationSummary.dateRange.map((date) => (
-                      <div
-                        key={`${order.id}-${date}`}
-                        className="calendar-slot"
-                      />
-                    ))}
-
+                <div className="calendar-body">
+                  {timelineOrders.map((order) => (
                     <div
-                      className={`order-bar order-${order.scenarioStatus}${order.scenarioStatus === 'late_risk' ? ' has-issue' : ''}`}
+                      key={order.id}
+                      className="calendar-grid calendar-row"
                       style={{
-                        gridColumn: `${order.startIndex + 2} / span ${order.span}`,
-                        opacity: 0.35 + simulationProgress * 0.65,
-                        transform: `scaleX(${Math.max(simulationProgress, 0.12)})`,
+                        gridTemplateColumns: `220px repeat(${simulationSummary.dateRange.length}, minmax(90px, 1fr))`,
                       }}
                     >
-                      <span>{order.chamberName}</span>
-                      <strong>{order.requiredDate}</strong>
+                      <div className="calendar-cell calendar-order">
+                        <strong>{order.product}</strong>
+                        <span>
+                          {order.center} · {order.quantityBoxes} boxes ·{' '}
+                          {order.pallets} pallets
+                        </span>
+                      </div>
+
+                      {simulationSummary.dateRange.map((date) => (
+                        <div
+                          key={`${order.id}-${date}`}
+                          className="calendar-slot"
+                        />
+                      ))}
+
+                      <div
+                        className={`order-bar order-${order.scenarioStatus}${order.scenarioStatus === 'late_risk' ? ' has-issue' : ''}`}
+                        style={{
+                          gridColumn: `${order.startIndex + 2} / span ${order.span}`,
+                          opacity: 0.35 + simulationProgress * 0.65,
+                          transform: `scaleX(${Math.max(simulationProgress, 0.12)})`,
+                        }}
+                      >
+                        <span>{order.chamberName}</span>
+                        <strong>{order.requiredDate}</strong>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
 
-            {timelineOrders.some((order) => order.riskNote) ? (
+            {timelineOrders.some(
+              (order) => order.scenarioStatus === 'late_risk' && order.riskNote,
+            ) ? (
               <div className="calendar-insights">
                 {timelineOrders
-                  .filter((order) => order.riskNote)
+                  .filter(
+                    (order) =>
+                      order.scenarioStatus === 'late_risk' && order.riskNote,
+                  )
                   .map((order) => (
                     <article key={`${order.id}-risk`} className="risk-card">
                       <div className="risk-card-head">
                         <strong>
-                          {order.product} · {order.chamberName}
+                          {order.product} · {order.center} · {order.chamberName}
                         </strong>
                         <span className="issue-pill">Late-risk</span>
                       </div>
