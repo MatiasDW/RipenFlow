@@ -2,7 +2,6 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  Link,
   Outlet,
 } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/router-devtools'
@@ -28,6 +27,8 @@ import {
   buildSimulationMetrics,
   buildSimulationSummary,
   buildTimelineOrders,
+  type ChamberFill,
+  type TimelineOrder,
 } from '@/lib/simulation-lab'
 
 const expectedFields = ['required_date', 'quantity', 'product']
@@ -35,18 +36,18 @@ const expectedFields = ['required_date', 'quantity', 'product']
 const scenarioOptions = [
   {
     id: 'balanced',
-    label: 'Balanced plan',
-    detail: 'Mix of due-date protection and chamber efficiency.',
+    label: 'Plan balanceado',
+    detail: 'Equilibra cumplimiento de fechas y uso eficiente de camaras.',
   },
   {
     id: 'margin',
-    label: 'Margin shield',
-    detail: 'Protects value loss and avoids unnecessary ripening.',
+    label: 'Proteccion de margen',
+    detail: 'Reduce perdida de valor y evita maduracion innecesaria.',
   },
   {
     id: 'service',
-    label: 'Service first',
-    detail: 'Pushes fulfillment even if chamber cost increases.',
+    label: 'Prioridad servicio',
+    detail: 'Prioriza cumplimiento aunque suba el costo operativo.',
   },
 ] as const
 
@@ -55,10 +56,44 @@ const unavailableChambersStorageKey = 'ripenflow:unavailable-chambers'
 const defaultChamberCount = 4
 const minChamberCount = 1
 const maxChamberCount = 12
+const visibleRiskGroupLimit = 3
 
 type UploadIssueModal = {
   title: string
   reasons: string[]
+}
+
+type RiskGroup = {
+  id: string
+  chamberName: string
+  riskNote: string
+  products: string[]
+  centers: string[]
+  orderCount: number
+  earliestRequiredDate: string
+  latestRequiredDate: string
+}
+
+type ChamberTimelineBar = TimelineOrder & {
+  laneIndex: number
+  centerCount: number
+  centers: string[]
+  lineCount: number
+  totalBoxes: number
+  totalPallets: number
+}
+
+type ChamberCalendarRow = {
+  chamber: ChamberFill
+  bars: ChamberTimelineBar[]
+  laneCount: number
+  visibleProductSummary: string
+}
+
+type HoveredCalendarBar = {
+  bar: ChamberTimelineBar
+  x: number
+  y: number
 }
 
 function formatCount(value: number, singular: string, plural: string) {
@@ -69,25 +104,229 @@ function formatRequiredFields(fieldNames: string[]) {
   return fieldNames.join(', ')
 }
 
+function normalizeSortValue(value: string | null | undefined) {
+  return value?.trim() ?? ''
+}
+
+function compareTextValues(
+  left: string | null | undefined,
+  right: string | null | undefined,
+) {
+  return normalizeSortValue(left).localeCompare(normalizeSortValue(right))
+}
+
+function formatCalendarDate(date: string | null | undefined) {
+  const normalizedDate = normalizeSortValue(date)
+
+  if (!normalizedDate) {
+    return 'Fecha sin programar'
+  }
+
+  const parsedDate = new Date(`${normalizedDate}T00:00:00`)
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return normalizedDate
+  }
+
+  return new Intl.DateTimeFormat('es-CL', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  }).format(parsedDate)
+}
+
+function normalizeSearchValue(value: string) {
+  return value.trim().toLowerCase()
+}
+
+function buildVisibleProductSummary(orders: TimelineOrder[]) {
+  const products = [
+    ...new Set(orders.map((order) => order.product).filter(Boolean)),
+  ]
+
+  if (products.length === 0) {
+    return 'Sin productos visibles'
+  }
+
+  if (products.length === 1) {
+    return products[0]
+  }
+
+  if (products.length === 2) {
+    return `${products[0]} + ${products[1]}`
+  }
+
+  return `${products[0]} +${products.length - 1} more`
+}
+
+function buildCalendarBarSummary(bar: ChamberTimelineBar) {
+  if (bar.centerCount <= 1) {
+    return `${bar.centers[0] ?? 'Centro sin asignar'} · ${bar.totalBoxes} cajas`
+  }
+
+  const visibleCenters = bar.centers.slice(0, 2)
+  const hiddenCenters = bar.centerCount - visibleCenters.length
+
+  return `${visibleCenters.join(', ')}${hiddenCenters > 0 ? ` +${hiddenCenters}` : ''} · ${bar.totalBoxes} cajas`
+}
+
+function buildChamberCalendarRows(
+  orders: TimelineOrder[],
+  chambers: ChamberFill[],
+) {
+  const ordersByChamber = new Map<string, TimelineOrder[]>()
+
+  for (const order of orders) {
+    const chamberOrders = ordersByChamber.get(order.chamberName) ?? []
+    chamberOrders.push(order)
+    ordersByChamber.set(order.chamberName, chamberOrders)
+  }
+
+  return chambers
+    .map((chamber) => {
+      const chamberOrders = [...(ordersByChamber.get(chamber.name) ?? [])]
+      const groupedBars = new Map<string, ChamberTimelineBar>()
+
+      for (const order of chamberOrders) {
+        const groupId = [
+          order.chamberName,
+          order.product,
+          order.purchaseOrderRef,
+          order.startIndex,
+          order.span,
+          order.requiredDate,
+          order.scenarioStatus,
+        ].join('::')
+        const existing = groupedBars.get(groupId)
+
+        if (!existing) {
+          groupedBars.set(groupId, {
+            ...order,
+            laneIndex: 0,
+            centerCount: order.center ? 1 : 0,
+            centers: order.center ? [order.center] : [],
+            lineCount: 1,
+            totalBoxes: order.quantityBoxes,
+            totalPallets: order.pallets,
+          })
+          continue
+        }
+
+        existing.lineCount += 1
+        existing.totalBoxes += order.quantityBoxes
+        existing.totalPallets += order.pallets
+
+        if (order.center && !existing.centers.includes(order.center)) {
+          existing.centers.push(order.center)
+          existing.centerCount = existing.centers.length
+        }
+      }
+
+      const chamberBars = [...groupedBars.values()].sort(
+        (left, right) =>
+          left.startIndex - right.startIndex ||
+          compareTextValues(left.requiredDate, right.requiredDate) ||
+          compareTextValues(left.product, right.product) ||
+          right.totalPallets - left.totalPallets,
+      )
+      const laneEndIndexes: number[] = []
+      const bars = chamberBars.map((bar) => {
+        const orderEndIndex = bar.startIndex + bar.span - 1
+        let laneIndex = laneEndIndexes.findIndex(
+          (lastEndIndex) => bar.startIndex > lastEndIndex,
+        )
+
+        if (laneIndex === -1) {
+          laneIndex = laneEndIndexes.length
+          laneEndIndexes.push(orderEndIndex)
+        } else {
+          laneEndIndexes[laneIndex] = orderEndIndex
+        }
+
+        return {
+          ...bar,
+          laneIndex,
+        } satisfies ChamberTimelineBar
+      })
+
+      return {
+        chamber,
+        bars,
+        laneCount: Math.max(laneEndIndexes.length, 1),
+        visibleProductSummary: buildVisibleProductSummary(chamberOrders),
+      } satisfies ChamberCalendarRow
+    })
+    .filter((row) => row.bars.length > 0 || row.chamber.isUnavailable)
+}
+
+function buildRiskGroups(orders: TimelineOrder[]) {
+  const grouped = new Map<string, RiskGroup>()
+
+  for (const order of orders) {
+    if (order.scenarioStatus !== 'late_risk' || !order.riskNote) {
+      continue
+    }
+
+    const groupId = `${order.chamberName}::${order.riskNote}`
+    const existing = grouped.get(groupId)
+
+    if (!existing) {
+      grouped.set(groupId, {
+        id: groupId,
+        chamberName: order.chamberName,
+        riskNote: order.riskNote,
+        products: [order.product],
+        centers: [order.center],
+        orderCount: 1,
+        earliestRequiredDate: order.requiredDate,
+        latestRequiredDate: order.requiredDate,
+      })
+      continue
+    }
+
+    if (!existing.products.includes(order.product)) {
+      existing.products.push(order.product)
+    }
+
+    if (!existing.centers.includes(order.center)) {
+      existing.centers.push(order.center)
+    }
+
+    existing.orderCount += 1
+    existing.earliestRequiredDate =
+      order.requiredDate < existing.earliestRequiredDate
+        ? order.requiredDate
+        : existing.earliestRequiredDate
+    existing.latestRequiredDate =
+      order.requiredDate > existing.latestRequiredDate
+        ? order.requiredDate
+        : existing.latestRequiredDate
+  }
+
+  return [...grouped.values()].sort((left, right) =>
+    left.earliestRequiredDate.localeCompare(right.earliestRequiredDate),
+  )
+}
+
 function buildUploadIssueModal(message: string): UploadIssueModal {
   const reasons = [message]
 
   if (message.includes('Solo se permiten archivos')) {
     return {
-      title: 'Unsupported file type',
+      title: 'Tipo de archivo no soportado',
       reasons: [
-        'The uploaded file is not a supported intake format.',
-        'Use `.csv`, `.xls` or `.xlsx`.',
+        'El archivo cargado no corresponde a un formato soportado.',
+        'Usa `.csv`, `.xls` o `.xlsx`.',
       ],
     }
   }
 
   if (message.includes('No sheet contains all required columns')) {
     return {
-      title: 'Missing required columns',
+      title: 'Faltan columnas requeridas',
       reasons: [
-        'None of the sheets contains the minimum fields expected by the simulation.',
-        'We accept either a normalized file with required_date, quantity and product, or a planning matrix with base columns plus date columns.',
+        'Ninguna hoja contiene los campos minimos esperados por la simulacion.',
+        'Aceptamos un archivo normalizado con required_date, quantity y product, o una matriz de planificacion con columnas base y columnas por fecha.',
         message,
       ],
     }
@@ -99,13 +338,13 @@ function buildUploadIssueModal(message: string): UploadIssueModal {
     message.includes('no contiene hojas')
   ) {
     return {
-      title: 'The file does not match intake limits',
+      title: 'El archivo no cumple los limites de carga',
       reasons,
     }
   }
 
   return {
-    title: 'We could not process this file',
+    title: 'No pudimos procesar este archivo',
     reasons,
   }
 }
@@ -121,7 +360,7 @@ function mergeWorkbookWarnings(workbook: ParsedWorkbook) {
 
     if (missingFields.length > 0) {
       warnings.push(
-        `Sheet "${sheet.name}" is missing expected columns: ${formatRequiredFields(missingFields)}.`,
+        `La hoja "${sheet.name}" no contiene las columnas esperadas: ${formatRequiredFields(missingFields)}.`,
       )
     }
   }
@@ -173,50 +412,6 @@ function RootLayout() {
       onPointerMove={handlePointerMove}
       onPointerLeave={handlePointerLeave}
     >
-      <header className="hero">
-        <div className="hero-topline">
-          <p className="eyebrow">RipenFlow</p>
-          <Link className="ghost-link" to="/">
-            Simulation Lab
-          </Link>
-        </div>
-
-        <div className="hero-copy">
-          <div className="hero-copy-block">
-            <h1>Demand to ripening simulation</h1>
-            <p>
-              Upload a purchase-order file, generate a live planning scenario
-              and show the client how containers, pallets, chambers and due
-              dates evolve in real time.
-            </p>
-          </div>
-
-          <div className="hero-visual" aria-hidden="true">
-            <div className="hero-orbit">
-              <span className="hero-orb hero-orb-core" />
-              <span className="hero-orb hero-orb-aura" />
-              <span className="hero-ring hero-ring-1" />
-              <span className="hero-ring hero-ring-2" />
-            </div>
-
-            <div className="hero-spectrum">
-              <span className="spectrum-band spectrum-band-green" />
-              <span className="spectrum-band spectrum-band-lime" />
-              <span className="spectrum-band spectrum-band-gold" />
-              <span className="spectrum-band spectrum-band-amber" />
-            </div>
-
-            <div className="hero-caption">
-              <strong>Ripening rhythm</strong>
-              <span>
-                Planning layers move from intake to chamber readiness with a
-                single operational narrative.
-              </span>
-            </div>
-          </div>
-        </div>
-      </header>
-
       <main>
         <Outlet />
       </main>
@@ -240,6 +435,11 @@ function HomePage() {
   const [uploadIssue, setUploadIssue] = useState<UploadIssueModal | null>(null)
   const [simulationProgress, setSimulationProgress] = useState(0)
   const [simulationRunId, setSimulationRunId] = useState(0)
+  const [showAllRisks, setShowAllRisks] = useState(false)
+  const [calendarSearch, setCalendarSearch] = useState('')
+  const [calendarProductFilter, setCalendarProductFilter] = useState('all')
+  const [hoveredCalendarBar, setHoveredCalendarBar] =
+    useState<HoveredCalendarBar | null>(null)
   const [chamberCount, setChamberCount] = useState(defaultChamberCount)
   const [chamberCountInput, setChamberCountInput] = useState(
     String(defaultChamberCount),
@@ -257,21 +457,63 @@ function HomePage() {
         unavailableChambers,
       })
     : null
-  const selectedFileName = parsedWorkbook?.fileName ?? 'No file selected'
+  const selectedFileName =
+    parsedWorkbook?.fileName ?? 'Ningun archivo seleccionado'
   const timelineOrders = simulationSummary
     ? buildTimelineOrders(simulationSummary)
     : []
   const chamberFill = simulationSummary
     ? buildChamberFill(simulationSummary, simulationProgress)
     : []
+  const productFilterOptions = [
+    ...new Set(timelineOrders.map((order) => order.product).filter(Boolean)),
+  ].sort(compareTextValues)
+  const normalizedCalendarSearch = normalizeSearchValue(calendarSearch)
+  const filteredTimelineOrders = timelineOrders.filter((order) => {
+    const matchesProduct =
+      calendarProductFilter === 'all' || order.product === calendarProductFilter
+
+    if (!matchesProduct) {
+      return false
+    }
+
+    if (!normalizedCalendarSearch) {
+      return true
+    }
+
+    return [
+      order.purchaseOrderRef,
+      order.product,
+      order.center,
+      order.provider,
+      order.ripener,
+      order.chamberName,
+      order.requiredDate,
+      order.id,
+    ]
+      .map((value) => normalizeSearchValue(value))
+      .some((value) => value.includes(normalizedCalendarSearch))
+  })
+  const chamberCalendarRows = buildChamberCalendarRows(
+    filteredTimelineOrders,
+    chamberFill,
+  )
   const simulationMetrics = simulationSummary
     ? buildSimulationMetrics(simulationSummary, simulationProgress)
     : []
+  const riskGroups = buildRiskGroups(filteredTimelineOrders)
+  const visibleRiskGroups = showAllRisks
+    ? riskGroups
+    : riskGroups.slice(0, visibleRiskGroupLimit)
+  const affectedChamberCount = new Set(
+    riskGroups.map((riskGroup) => riskGroup.chamberName),
+  ).size
   const activeScenarioOption =
     scenarioOptions.find((scenario) => scenario.id === activeScenario) ??
     scenarioOptions[0]
   const workbookWarnings = parsedWorkbook?.warnings ?? []
   const detectedOrderCount = activeSheet?.dataframe.totalRows ?? 0
+  const hasLoadedWorkbook = parsedWorkbook !== null
   const dataframePreview =
     activeSheet?.dataframe.sampleRows.map((row, index) => ({
       _row_number: index + 2,
@@ -287,7 +529,7 @@ function HomePage() {
   )
   const previewChamberNames = Array.from(
     { length: normalizedChamberCount },
-    (_, index) => `Chamber ${String.fromCharCode(65 + index)}`,
+    (_, index) => `Camara ${String.fromCharCode(65 + index)}`,
   )
   const hasPendingChamberCount =
     normalizedChamberCount !== chamberCount ||
@@ -323,7 +565,7 @@ function HomePage() {
           .filter((value) =>
             Array.from(
               { length: nextChamberCount },
-              (_, index) => `Chamber ${String.fromCharCode(65 + index)}`,
+              (_, index) => `Camara ${String.fromCharCode(65 + index)}`,
             ).includes(value),
           )
       : []
@@ -385,7 +627,7 @@ function HomePage() {
 
       if (preferredSheetIndex === -1) {
         throw new Error(
-          `No sheet contains all required columns: ${formatRequiredFields(expectedFields)}.`,
+          `Ninguna hoja contiene todas las columnas requeridas: ${formatRequiredFields(expectedFields)}.`,
         )
       }
 
@@ -411,7 +653,7 @@ function HomePage() {
       const message =
         error instanceof Error
           ? error.message
-          : 'We could not read the selected file.'
+          : 'No pudimos leer el archivo seleccionado.'
 
       setParsedWorkbook(null)
       setErrorMessage(message)
@@ -453,46 +695,32 @@ function HomePage() {
     )
   }
 
+  function handleCalendarBarPointerMove(
+    event: PointerEvent<HTMLDivElement>,
+    bar: ChamberTimelineBar,
+  ) {
+    setHoveredCalendarBar({
+      bar,
+      x: event.clientX,
+      y: event.clientY,
+    })
+  }
+
   return (
     <div className="workspace">
-      <section className="panel marquee-panel">
-        <div className="marquee-grid">
-          <div className="marquee-card">
-            <p className="section-label">What the client sees</p>
-            <h2>Upload demand, watch the plan move</h2>
-            <p className="panel-copy">
-              The dashboard turns a spreadsheet into a live simulation with
-              boxes, pallets, containers, chamber load and a date-based order
-              calendar.
-            </p>
-          </div>
-
-          <div className="marquee-card compact">
-            <p className="section-label">Expected fields</p>
-            <div className="field-strip">
-              {expectedFields.map((field) => (
-                <span key={field} className="field-chip">
-                  {field}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
       <section className="panel upload-panel">
         <div className="panel-header upload-header">
           <div>
-            <p className="section-label">File intake</p>
-            <h2>Purchase order upload</h2>
+            <p className="section-label">Carga de archivo</p>
+            <h2>Subir orden de compra</h2>
             <p className="panel-copy">
-              Load `.csv`, `.xls` or `.xlsx`. We interpret the first row as
-              headers and generate a client-facing planning view immediately.
-              Wide demand matrices with one column per date are normalized
-              automatically.
+              Carga un archivo `.csv`, `.xls` o `.xlsx`. Interpretamos la
+              primera fila como encabezados y generamos de inmediato una vista
+              de planificacion para el cliente. Las matrices anchas con una
+              columna por fecha se normalizan automaticamente.
             </p>
           </div>
-          <span className="pill">{isReadingFile ? 'Reading' : 'Ready'}</span>
+          <span className="pill">{isReadingFile ? 'Leyendo' : 'Listo'}</span>
         </div>
 
         <div className="upload-layout">
@@ -510,24 +738,24 @@ function HomePage() {
               }}
             />
 
-            <p className="section-label">Source file</p>
-            <h3>Client order intake</h3>
+            <p className="section-label">Archivo fuente</p>
+            <h3>Ingreso de orden del cliente</h3>
             <p className="panel-copy">
-              Use the visible picker below. Once the file is parsed, the
-              simulation lab updates automatically.
+              Usa el selector visible de abajo. En cuanto el archivo se procesa,
+              la simulacion se actualiza automaticamente.
             </p>
 
             <div className="limits-list">
               <span>
-                Max {formatBytes(purchaseFileLimits.maxFileSizeBytes)}
+                Maximo {formatBytes(purchaseFileLimits.maxFileSizeBytes)}
               </span>
-              <span>Up to {purchaseFileLimits.maxSheets} sheets</span>
+              <span>Hasta {purchaseFileLimits.maxSheets} hojas</span>
               <span>
-                Up to {purchaseFileLimits.maxRowsPerSheet} rows per sheet
+                Hasta {purchaseFileLimits.maxRowsPerSheet} filas por hoja
               </span>
-              <span>Up to {purchaseFileLimits.maxTotalRows} total rows</span>
+              <span>Hasta {purchaseFileLimits.maxTotalRows} filas totales</span>
               <span>
-                Up to {purchaseFileLimits.maxColumnsPerSheet} columns per sheet
+                Hasta {purchaseFileLimits.maxColumnsPerSheet} columnas por hoja
               </span>
             </div>
 
@@ -539,60 +767,52 @@ function HomePage() {
                 onClick={() => inputRef.current?.click()}
               >
                 {isReadingFile
-                  ? 'Reading file...'
-                  : 'Select purchase order file'}
+                  ? 'Leyendo archivo...'
+                  : 'Seleccionar orden de compra'}
               </button>
-              <div className="selected-file">{selectedFileName}</div>
+            </div>
+
+            <div
+              className={
+                hasLoadedWorkbook
+                  ? 'upload-file-card is-loaded'
+                  : 'upload-file-card'
+              }
+            >
+              <p className="section-label">Archivo seleccionado</p>
+              <strong>{selectedFileName}</strong>
+              <span>
+                {hasLoadedWorkbook
+                  ? `${formatCount(detectedOrderCount, 'fila detectada', 'filas detectadas')} en la hoja activa`
+                  : 'Sube una orden de compra para desbloquear la vista de simulacion.'}
+              </span>
             </div>
 
             <div className="upload-hint">
-              Visible assumptions: quantity is treated as boxes, then converted
-              into pallets and containers for the simulation view. If the file
-              comes as a demand matrix, each non-zero date cell becomes one
-              order line.
+              Supuestos visibles: quantity se interpreta como cajas y luego se
+              convierte a pallets y contenedores para la simulacion. Si el
+              archivo viene como matriz de demanda, cada celda con fecha y
+              cantidad mayor a cero se transforma en una linea de pedido.
             </div>
 
             {parsedWorkbook ? (
               <div className="upload-summary">
-                <strong>1 file loaded</strong>
+                <strong>1 archivo cargado</strong>
                 <span>
                   {formatCount(
                     detectedOrderCount,
-                    'order row detected',
-                    'order rows detected',
+                    'fila detectada',
+                    'filas detectadas',
                   )}
                 </span>
                 <p>
-                  The planner treats each data row in the uploaded file as a
-                  separate order line. One CSV can contain many orders.
+                  El planificador interpreta cada fila del archivo cargado como
+                  una linea independiente. Un solo CSV puede contener muchas
+                  necesidades.
                 </p>
               </div>
             ) : null}
           </div>
-
-          <aside className="brief-column">
-            <div className="note-card">
-              <p className="section-label">Simulation framing</p>
-              <ul className="bullet-list">
-                <li>Economic performance is the main objective.</li>
-                <li>Demand can arrive as one date column per required day.</li>
-                <li>
-                  Each non-zero cell becomes a dated order line per center.
-                </li>
-                <li>Planning must happen on batches and chambers.</li>
-                <li>Late, surplus and over-ripening risk stay visible.</li>
-              </ul>
-            </div>
-
-            <div className="note-card">
-              <p className="section-label">Animation hooks</p>
-              <ul className="bullet-list">
-                <li>Live stage progression while the run advances.</li>
-                <li>Container and chamber fill bars update over time.</li>
-                <li>Calendar blocks show the time frame of each order.</li>
-              </ul>
-            </div>
-          </aside>
         </div>
 
         {errorMessage ? (
@@ -603,7 +823,7 @@ function HomePage() {
       {uploadIssue ? (
         <div className="modal-backdrop">
           <button
-            aria-label="Close upload guidance"
+            aria-label="Cerrar ayuda de carga"
             className="modal-dismiss-layer"
             type="button"
             onClick={() => setUploadIssue(null)}
@@ -616,7 +836,7 @@ function HomePage() {
           >
             <div className="modal-header">
               <div>
-                <p className="section-label">Upload guidance</p>
+                <p className="section-label">Ayuda de carga</p>
                 <h2 id="upload-issue-title">{uploadIssue.title}</h2>
               </div>
               <button
@@ -624,37 +844,37 @@ function HomePage() {
                 type="button"
                 onClick={() => setUploadIssue(null)}
               >
-                Close
+                Cerrar
               </button>
             </div>
 
             <div className="modal-grid">
               <article className="modal-card">
-                <p className="section-label">What we expect</p>
+                <p className="section-label">Que esperamos</p>
                 <ul className="bullet-list">
-                  <li>File type: `.csv`, `.xls` or `.xlsx`.</li>
+                  <li>Tipo de archivo: `.csv`, `.xls` o `.xlsx`.</li>
                   <li>
-                    Minimum normalized fields:{' '}
+                    Campos minimos normalizados:{' '}
                     {formatRequiredFields(expectedFields)}.
                   </li>
                   <li>
-                    Also accepted: planning matrix with `Proveedor`,
-                    `Madurador`, `Centro`, `SKU Familia`, `Descripcion SKU` and
-                    one or more date columns.
+                    Tambien aceptamos una matriz de planificacion con
+                    `Proveedor`, `Madurador`, `Centro`, `SKU Familia`,
+                    `Descripcion SKU` y una o mas columnas de fecha.
                   </li>
                   <li>
-                    Maximum size:{' '}
+                    Tamano maximo:{' '}
                     {formatBytes(purchaseFileLimits.maxFileSizeBytes)}.
                   </li>
                   <li>
-                    Maximum sheets: {purchaseFileLimits.maxSheets}. Maximum rows
-                    per sheet: {purchaseFileLimits.maxRowsPerSheet}.
+                    Maximo de hojas: {purchaseFileLimits.maxSheets}. Maximo de
+                    filas por hoja: {purchaseFileLimits.maxRowsPerSheet}.
                   </li>
                 </ul>
               </article>
 
               <article className="modal-card">
-                <p className="section-label">Why this file failed</p>
+                <p className="section-label">Por que fallo este archivo</p>
                 <ul className="bullet-list">
                   {uploadIssue.reasons.map((reason) => (
                     <li key={reason}>{reason}</li>
@@ -664,7 +884,7 @@ function HomePage() {
             </div>
 
             <article className="modal-card modal-card-wide">
-              <p className="section-label">Expected header example</p>
+              <p className="section-label">Ejemplo de encabezado esperado</p>
               <pre className="code-preview modal-code-preview">
                 <code>
                   {`required_date,quantity,product
@@ -680,20 +900,20 @@ function HomePage() {
         <section className="panel simulation-panel">
           <div className="panel-header">
             <div>
-              <p className="section-label">Simulation Lab</p>
-              <h2>Live planning scenario</h2>
+              <p className="section-label">Laboratorio de simulacion</p>
+              <h2>Escenario de planificacion en vivo</h2>
               <p className="panel-copy">
-                Run a client-facing scenario with visible movement, operational
-                load and due-date exposure.
+                Corre un escenario orientado al cliente con movimiento visible,
+                carga operativa y riesgo sobre fechas de entrega.
               </p>
               <p className="simulation-explainer">
-                {selectedFileName} generated{' '}
+                {selectedFileName} genero{' '}
                 {formatCount(
                   detectedOrderCount,
-                  'simulated order line',
-                  'simulated order lines',
+                  'linea simulada',
+                  'lineas simuladas',
                 )}
-                . The planner does not treat the whole file as one order.
+                . El planificador no trata todo el archivo como una sola orden.
               </p>
             </div>
 
@@ -718,14 +938,14 @@ function HomePage() {
                   })
                 }}
               >
-                Download result workbook
+                Descargar workbook de resultados
               </button>
               <button
                 className="ghost-link"
                 type="button"
                 onClick={() => setSimulationRunId((current) => current + 1)}
               >
-                Rerun simulation
+                Volver a simular
               </button>
             </div>
           </div>
@@ -758,259 +978,238 @@ function HomePage() {
             ))}
           </div>
 
-          <div className="ops-grid">
-            <section className="subpanel">
-              <div className="subpanel-head">
-                <div>
-                  <p className="section-label">Chamber load</p>
-                  <h3>Containers and pallets in motion</h3>
-                </div>
-                <span>{Math.round(simulationProgress * 100)}% complete</span>
+          <section className="subpanel planning-controls-panel">
+            <div className="subpanel-head">
+              <div>
+                <p className="section-label">Controles de planificacion</p>
+                <h3>Disponibilidad de camaras</h3>
               </div>
+              <span>{Math.round(simulationProgress * 100)}% completado</span>
+            </div>
 
-              <div className="chamber-config-bar">
-                <p className="chamber-config-copy">
-                  Use only the chambers the client actually has available. Mark
-                  the ones already occupied so the scheduler skips them but
-                  still shows them in the run.
-                </p>
+            <div className="chamber-config-bar">
+              <p className="chamber-config-copy">
+                Define cuantas camaras estan disponibles antes de leer el
+                calendario. Las camaras ocupadas siguen visibles como alerta,
+                pero el planificador no las usa.
+              </p>
 
-                <div className="chamber-config-controls">
-                  <label className="chamber-count-field">
-                    <span>Chambers</span>
-                    <input
-                      className="chamber-count-input"
-                      type="number"
-                      min={minChamberCount}
-                      max={maxChamberCount}
-                      step={1}
-                      value={chamberCountInput}
-                      onChange={(event) =>
-                        setChamberCountInput(event.target.value)
-                      }
-                    />
-                  </label>
-
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={!hasPendingChamberConfig}
-                    onClick={handleSaveChamberCount}
-                  >
-                    Save
-                  </button>
-                </div>
-              </div>
-
-              <div className="chamber-toggle-row">
-                {previewChamberNames.map((chamberName) => (
-                  <button
-                    key={chamberName}
-                    className={
-                      unavailableChambersDraft.includes(chamberName)
-                        ? 'chamber-toggle is-active'
-                        : 'chamber-toggle'
+              <div className="chamber-config-controls">
+                <label className="chamber-count-field">
+                  <span>Camaras</span>
+                  <input
+                    className="chamber-count-input"
+                    type="number"
+                    min={minChamberCount}
+                    max={maxChamberCount}
+                    step={1}
+                    value={chamberCountInput}
+                    onChange={(event) =>
+                      setChamberCountInput(event.target.value)
                     }
-                    type="button"
-                    onClick={() => handleToggleUnavailableChamber(chamberName)}
-                  >
-                    <strong>{chamberName}</strong>
-                    <span>
-                      {unavailableChambersDraft.includes(chamberName)
-                        ? 'Occupied'
-                        : 'Available'}
-                    </span>
-                  </button>
-                ))}
+                  />
+                </label>
+
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={!hasPendingChamberConfig}
+                  onClick={handleSaveChamberCount}
+                >
+                  Guardar
+                </button>
               </div>
+            </div>
 
-              <div className="chamber-list">
-                {chamberFill.map((chamber) => (
-                  <article
-                    key={chamber.name}
-                    className={`chamber-card chamber-${chamber.status}${chamber.hasIssue ? ' has-issue' : ''}`}
-                  >
-                    <div className="chamber-copy">
-                      <div>
-                        <strong>{chamber.name}</strong>
-                        <span>
-                          {formatCount(
-                            chamber.activeOrders,
-                            'assigned order line',
-                            'assigned order lines',
-                          )}
-                        </span>
-                      </div>
-                      {chamber.hasIssue ? (
-                        <span className="issue-pill">
-                          {chamber.isUnavailable
-                            ? 'Occupied'
-                            : chamber.lateRiskOrders > 0
-                              ? `${chamber.lateRiskOrders} late-risk`
-                              : 'Near capacity'}
-                        </span>
-                      ) : (
-                        <span className="status-pill">
-                          {chamber.activeOrders === 0 ? 'Available' : 'On plan'}
-                        </span>
-                      )}
-                    </div>
-                    <div className="chamber-visual" aria-hidden="true">
-                      <div className="chamber-frame">
-                        {Array.from({ length: 12 }, (_, index) => {
-                          const slotFill = (index + 1) * (100 / 12)
-                          const isFilled = chamber.occupancy >= slotFill
-
-                          return (
-                            <span
-                              key={`${chamber.name}-slot-${slotFill}`}
-                              className={
-                                isFilled
-                                  ? 'chamber-slot is-filled'
-                                  : 'chamber-slot'
-                              }
-                            />
-                          )
-                        })}
-                      </div>
-                      <div className="fill-track">
-                        <span
-                          className="fill-bar"
-                          style={{ width: `${chamber.occupancy}%` }}
-                        />
-                      </div>
-                    </div>
-                    <div className="fill-meta">
-                      <span>{chamber.occupancy}% occupied</span>
-                      <span>
-                        {Math.max(0, 100 - chamber.occupancy)}% headroom
-                      </span>
-                    </div>
-                    {chamber.issueNote ? (
-                      <p className="issue-copy">{chamber.issueNote}</p>
-                    ) : null}
-                  </article>
-                ))}
-              </div>
-            </section>
-
-            <section className="subpanel snapshot-panel">
-              <div className="subpanel-head">
-                <div>
-                  <p className="section-label">Demand snapshot</p>
-                  <h3>Pallets, boxes and containers</h3>
-                </div>
-              </div>
-
-              <div className="snapshot-hero">
-                <div className="snapshot-stack">
-                  <div className="snapshot-visual snapshot-visual-containers">
-                    {Array.from(
-                      {
-                        length: Math.max(simulationSummary.totalContainers, 1),
-                      },
-                      (_, slotNumber) => slotNumber + 1,
-                    ).map((slotNumber) => (
-                      <span
-                        key={`container-${slotNumber}`}
-                        className="snapshot-unit is-container"
-                      />
-                    ))}
-                  </div>
-                  <div className="snapshot-visual snapshot-visual-pallets">
-                    {Array.from(
-                      { length: Math.min(simulationSummary.totalPallets, 18) },
-                      (_, slotNumber) => slotNumber + 1,
-                    ).map((slotNumber) => (
-                      <span
-                        key={`pallet-${slotNumber}`}
-                        className="snapshot-unit is-pallet"
-                      />
-                    ))}
-                  </div>
-                  <div className="snapshot-visual snapshot-visual-boxes">
-                    {Array.from(
-                      {
-                        length: Math.min(
-                          Math.ceil(simulationSummary.totalBoxes / 1200),
-                          18,
-                        ),
-                      },
-                      (_, slotNumber) => slotNumber + 1,
-                    ).map((slotNumber) => (
-                      <span
-                        key={`box-${slotNumber}`}
-                        className="snapshot-unit is-box"
-                      />
-                    ))}
-                  </div>
-                </div>
-
-                <div className="snapshot-caption">
-                  <strong>Current load profile</strong>
+            <div className="chamber-toggle-row">
+              {previewChamberNames.map((chamberName) => (
+                <button
+                  key={chamberName}
+                  className={
+                    unavailableChambersDraft.includes(chamberName)
+                      ? 'chamber-toggle is-active'
+                      : 'chamber-toggle'
+                  }
+                  type="button"
+                  onClick={() => handleToggleUnavailableChamber(chamberName)}
+                >
+                  <strong>{chamberName}</strong>
                   <span>
-                    Green blocks show the loaded planning footprint derived from
-                    the uploaded orders.
+                    {unavailableChambersDraft.includes(chamberName)
+                      ? 'Ocupada'
+                      : 'Disponible'}
                   </span>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="subpanel snapshot-panel">
+            <div className="subpanel-head">
+              <div>
+                <p className="section-label">Resumen de demanda</p>
+                <h3>Pallets, cajas y contenedores</h3>
+              </div>
+            </div>
+
+            <div className="snapshot-hero">
+              <div className="snapshot-stack">
+                <div className="snapshot-visual snapshot-visual-containers">
+                  {Array.from(
+                    {
+                      length: Math.max(simulationSummary.totalContainers, 1),
+                    },
+                    (_, slotNumber) => slotNumber + 1,
+                  ).map((slotNumber) => (
+                    <span
+                      key={`container-${slotNumber}`}
+                      className="snapshot-unit is-container"
+                    />
+                  ))}
+                </div>
+                <div className="snapshot-visual snapshot-visual-pallets">
+                  {Array.from(
+                    { length: Math.min(simulationSummary.totalPallets, 18) },
+                    (_, slotNumber) => slotNumber + 1,
+                  ).map((slotNumber) => (
+                    <span
+                      key={`pallet-${slotNumber}`}
+                      className="snapshot-unit is-pallet"
+                    />
+                  ))}
+                </div>
+                <div className="snapshot-visual snapshot-visual-boxes">
+                  {Array.from(
+                    {
+                      length: Math.min(
+                        Math.ceil(simulationSummary.totalBoxes / 1200),
+                        18,
+                      ),
+                    },
+                    (_, slotNumber) => slotNumber + 1,
+                  ).map((slotNumber) => (
+                    <span
+                      key={`box-${slotNumber}`}
+                      className="snapshot-unit is-box"
+                    />
+                  ))}
                 </div>
               </div>
 
-              <div className="demand-stack">
-                <article className="demand-card demand-good">
-                  <strong>{simulationSummary.totalBoxes}</strong>
-                  <span>Boxes required</span>
-                </article>
-                <article className="demand-card demand-good">
-                  <strong>{simulationSummary.totalPallets}</strong>
-                  <span>Pallets estimated</span>
-                </article>
-                <article className="demand-card demand-good">
-                  <strong>{simulationSummary.totalContainers}</strong>
-                  <span>Containers filling</span>
-                </article>
-                <article className="demand-card demand-neutral">
-                  <strong>{formatBytes(parsedWorkbook?.size ?? 0)}</strong>
-                  <span>Uploaded file size</span>
-                </article>
+              <div className="snapshot-caption">
+                <strong>Perfil de carga actual</strong>
+                <span>
+                  Los bloques verdes muestran la huella de carga derivada del
+                  archivo cargado.
+                </span>
               </div>
-            </section>
-          </div>
+            </div>
+
+            <div className="demand-stack">
+              <article className="demand-card demand-good">
+                <strong>{simulationSummary.totalBoxes}</strong>
+                <span>Cajas requeridas</span>
+              </article>
+              <article className="demand-card demand-good">
+                <strong>{simulationSummary.totalPallets}</strong>
+                <span>Pallets estimados</span>
+              </article>
+              <article className="demand-card demand-good">
+                <strong>
+                  {
+                    simulationSummary.chamberUsage.filter(
+                      (chamber) => chamber.activated,
+                    ).length
+                  }
+                </strong>
+                <span>Camaras activas</span>
+              </article>
+              <article className="demand-card demand-neutral">
+                <strong>{formatBytes(parsedWorkbook?.size ?? 0)}</strong>
+                <span>Tamano del archivo</span>
+              </article>
+            </div>
+          </section>
 
           <div className="metric-grid">
-            {simulationMetrics.map((metric) => (
-              <article
-                key={metric.label}
-                className={`metric-card ${metric.tone}${metric.tone === 'warning' ? ' has-issue' : ''}`}
-              >
-                <p className="section-label">{metric.label}</p>
-                <strong>{metric.value}</strong>
-                <span>{metric.hint}</span>
-              </article>
-            ))}
+            {simulationMetrics
+              .filter((metric) => metric.label !== 'Contenedores estimados')
+              .map((metric) => (
+                <article
+                  key={metric.label}
+                  className={`metric-card ${metric.tone}${metric.tone === 'warning' ? ' has-issue' : ''}`}
+                >
+                  <p className="section-label">{metric.label}</p>
+                  <strong>{metric.value}</strong>
+                  <span>{metric.hint}</span>
+                </article>
+              ))}
           </div>
 
           <section className="subpanel calendar-panel">
             <div className="subpanel-head">
               <div>
-                <p className="section-label">Calendar view</p>
-                <h3>Order time frame by required date</h3>
+                <p className="section-label">Vista calendario</p>
+                <h3>Ocupacion de camaras en el tiempo</h3>
               </div>
-              <span>{timelineOrders.length} orders</span>
+              <span>
+                {filteredTimelineOrders.length} lineas visibles en{' '}
+                {chamberCalendarRows.length} camaras
+              </span>
+            </div>
+
+            <div className="calendar-toolbar">
+              <label className="filter-field">
+                <span>Orden de compra o producto</span>
+                <input
+                  className="filter-input"
+                  type="text"
+                  value={calendarSearch}
+                  placeholder="Buscar producto, centro, proveedor o linea"
+                  onChange={(event) => setCalendarSearch(event.target.value)}
+                />
+              </label>
+
+              <label className="filter-field">
+                <span>Producto</span>
+                <select
+                  className="filter-select"
+                  value={calendarProductFilter}
+                  onChange={(event) =>
+                    setCalendarProductFilter(event.target.value)
+                  }
+                >
+                  <option value="all">Todos los productos</option>
+                  {productFilterOptions.map((product) => (
+                    <option key={product} value={product}>
+                      {product}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <button
+                className="ghost-link calendar-clear"
+                type="button"
+                onClick={() => {
+                  setCalendarSearch('')
+                  setCalendarProductFilter('all')
+                }}
+              >
+                Limpiar filtros
+              </button>
             </div>
 
             <div className="calendar-legend">
               <p className="calendar-legend-title">
-                El calendario ya no usa gris ambiguo para ordenes sanas
+                El calendario distingue entre carga en plan y carga con riesgo
               </p>
               <div className="calendar-legend-list">
-                <span className="calendar-legend-item legend-ready">
-                  ready ahora va en azul
-                </span>
                 <span className="calendar-legend-item legend-ripening">
-                  in_ripening queda en verde
+                  en plan queda en verde
                 </span>
                 <span className="calendar-legend-item legend-risk">
-                  late-risk sigue en rojo
+                  riesgo sigue en rojo
                 </span>
               </div>
             </div>
@@ -1020,10 +1219,10 @@ function HomePage() {
                 <div
                   className="calendar-grid calendar-header"
                   style={{
-                    gridTemplateColumns: `220px repeat(${simulationSummary.dateRange.length}, minmax(90px, 1fr))`,
+                    gridTemplateColumns: `280px repeat(${simulationSummary.dateRange.length}, minmax(90px, 1fr))`,
                   }}
                 >
-                  <div className="calendar-cell calendar-label">Order</div>
+                  <div className="calendar-cell calendar-label">Camara</div>
                   {simulationSummary.dateRange.map((date) => (
                     <div key={date} className="calendar-cell">
                       {date.slice(5)}
@@ -1032,66 +1231,206 @@ function HomePage() {
                 </div>
 
                 <div className="calendar-body">
-                  {timelineOrders.map((order) => (
+                  {chamberCalendarRows.map((row) => (
                     <div
-                      key={order.id}
-                      className="calendar-grid calendar-row"
+                      key={row.chamber.name}
+                      className="calendar-grid chamber-calendar-row"
                       style={{
-                        gridTemplateColumns: `220px repeat(${simulationSummary.dateRange.length}, minmax(90px, 1fr))`,
+                        gridTemplateColumns: `280px repeat(${simulationSummary.dateRange.length}, minmax(90px, 1fr))`,
+                        minHeight: `${row.laneCount * 56 + 26}px`,
                       }}
                     >
-                      <div className="calendar-cell calendar-order">
-                        <strong>{order.product}</strong>
+                      <div className="calendar-cell calendar-chamber-info">
+                        <div className="calendar-chamber-head">
+                          <strong>{row.chamber.name}</strong>
+                          {row.chamber.hasIssue ? (
+                            <span className="issue-pill">
+                              {row.chamber.isUnavailable
+                                ? 'Ocupada'
+                                : row.chamber.lateRiskOrders > 0
+                                  ? `${row.chamber.lateRiskOrders} alerta`
+                                  : 'Alerta'}
+                            </span>
+                          ) : (
+                            <span className="status-pill">En plan</span>
+                          )}
+                        </div>
                         <span>
-                          {order.center} · {order.quantityBoxes} boxes ·{' '}
-                          {order.pallets} pallets
+                          {row.chamber.occupancy}% ocupada ·{' '}
+                          {row.visibleProductSummary}
                         </span>
+                        <span>
+                          {formatCount(
+                            row.bars.length,
+                            'grupo visible',
+                            'grupos visibles',
+                          )}
+                        </span>
+                        {row.chamber.issueNote ? (
+                          <p className="calendar-warning-note">
+                            {row.chamber.issueNote}
+                          </p>
+                        ) : null}
                       </div>
 
                       {simulationSummary.dateRange.map((date) => (
                         <div
-                          key={`${order.id}-${date}`}
+                          key={`${row.chamber.name}-${date}`}
                           className="calendar-slot"
                         />
                       ))}
 
-                      <div
-                        className={`order-bar order-${order.scenarioStatus}${order.scenarioStatus === 'late_risk' ? ' has-issue' : ''}`}
-                        style={{
-                          gridColumn: `${order.startIndex + 2} / span ${order.span}`,
-                          opacity: 0.35 + simulationProgress * 0.65,
-                          transform: `scaleX(${Math.max(simulationProgress, 0.12)})`,
-                        }}
-                      >
-                        <span>{order.chamberName}</span>
-                        <strong>{order.requiredDate}</strong>
-                      </div>
+                      {row.bars.map((order) => (
+                        <div
+                          key={order.id}
+                          className={`order-bar order-${order.scenarioStatus}${order.scenarioStatus === 'late_risk' ? ' has-issue' : ''}`}
+                          onPointerEnter={(event) =>
+                            handleCalendarBarPointerMove(event, order)
+                          }
+                          onPointerMove={(event) =>
+                            handleCalendarBarPointerMove(event, order)
+                          }
+                          onPointerLeave={() => setHoveredCalendarBar(null)}
+                          style={{
+                            gridColumn: `${order.startIndex + 2} / span ${order.span}`,
+                            top: `${12 + order.laneIndex * 56}px`,
+                            opacity: 0.35 + simulationProgress * 0.65,
+                            transform: `scaleX(${Math.max(simulationProgress, 0.12)})`,
+                          }}
+                        >
+                          <div className="order-bar-copy">
+                            <strong>{order.product}</strong>
+                            <span>{buildCalendarBarSummary(order)}</span>
+                          </div>
+                          <div className="order-bar-meta">
+                            <span>
+                              {formatCalendarDate(order.requiredDate)}
+                            </span>
+                            {order.lineCount > 1 ? (
+                              <span>{order.lineCount} lineas agrupadas</span>
+                            ) : null}
+                            {order.scenarioStatus === 'late_risk' ? (
+                              <span className="bar-warning">Alerta</span>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   ))}
+
+                  {chamberCalendarRows.length === 0 ? (
+                    <div className="calendar-empty-state">
+                      Ninguna camara coincide con los filtros actuales.
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
 
-            {timelineOrders.some(
-              (order) => order.scenarioStatus === 'late_risk' && order.riskNote,
-            ) ? (
+            {hoveredCalendarBar ? (
+              <div
+                className="floating-calendar-tooltip"
+                style={{
+                  left: `${Math.min(
+                    hoveredCalendarBar.x + 16,
+                    (typeof window !== 'undefined' ? window.innerWidth : 1280) -
+                      340,
+                  )}px`,
+                  top: `${Math.min(
+                    hoveredCalendarBar.y + 18,
+                    (typeof window !== 'undefined' ? window.innerHeight : 900) -
+                      180,
+                  )}px`,
+                }}
+              >
+                <strong>{hoveredCalendarBar.bar.product}</strong>
+                {hoveredCalendarBar.bar.purchaseOrderRef ? (
+                  <span>OC: {hoveredCalendarBar.bar.purchaseOrderRef}</span>
+                ) : null}
+                <span>
+                  {hoveredCalendarBar.bar.centers.length > 0
+                    ? `Centros: ${hoveredCalendarBar.bar.centers.join(', ')}`
+                    : 'Centro sin asignar'}
+                </span>
+                <span>
+                  {hoveredCalendarBar.bar.totalBoxes} cajas ·{' '}
+                  {hoveredCalendarBar.bar.totalPallets} pallets
+                </span>
+                <span>
+                  Fecha requerida:{' '}
+                  {formatCalendarDate(hoveredCalendarBar.bar.requiredDate)}
+                </span>
+                <span>
+                  Lineas agrupadas: {hoveredCalendarBar.bar.lineCount}
+                </span>
+                {hoveredCalendarBar.bar.riskNote ? (
+                  <span>Alerta: {hoveredCalendarBar.bar.riskNote}</span>
+                ) : null}
+              </div>
+            ) : null}
+
+            {riskGroups.length > 0 ? (
               <div className="calendar-insights">
-                {timelineOrders
-                  .filter(
-                    (order) =>
-                      order.scenarioStatus === 'late_risk' && order.riskNote,
-                  )
-                  .map((order) => (
-                    <article key={`${order.id}-risk`} className="risk-card">
-                      <div className="risk-card-head">
-                        <strong>
-                          {order.product} · {order.center} · {order.chamberName}
-                        </strong>
-                        <span className="issue-pill">Late-risk</span>
-                      </div>
-                      <p>{order.riskNote}</p>
-                    </article>
-                  ))}
+                <div className="risk-summary-grid">
+                  <article className="risk-summary-card">
+                    <strong>
+                      {riskGroups.reduce(
+                        (sum, riskGroup) => sum + riskGroup.orderCount,
+                        0,
+                      )}
+                    </strong>
+                    <span>Lineas con riesgo</span>
+                  </article>
+                  <article className="risk-summary-card">
+                    <strong>{affectedChamberCount}</strong>
+                    <span>Camaras afectadas</span>
+                  </article>
+                  <article className="risk-summary-card">
+                    <strong>{riskGroups.length}</strong>
+                    <span>Grupos de riesgo</span>
+                  </article>
+                </div>
+
+                {visibleRiskGroups.map((riskGroup) => (
+                  <article key={riskGroup.id} className="risk-card">
+                    <div className="risk-card-head">
+                      <strong>
+                        {riskGroup.chamberName} · {riskGroup.orderCount} linea
+                        afectada
+                        {riskGroup.orderCount === 1 ? '' : 's'}
+                      </strong>
+                      <span className="issue-pill">Riesgo</span>
+                    </div>
+                    <p>{riskGroup.riskNote}</p>
+                    <div className="risk-card-meta">
+                      <span>
+                        Productos: {riskGroup.products.slice(0, 2).join(', ')}
+                        {riskGroup.products.length > 2
+                          ? ` +${riskGroup.products.length - 2} mas`
+                          : ''}
+                      </span>
+                      <span>
+                        Fechas: {riskGroup.earliestRequiredDate}
+                        {riskGroup.latestRequiredDate !==
+                        riskGroup.earliestRequiredDate
+                          ? ` a ${riskGroup.latestRequiredDate}`
+                          : ''}
+                      </span>
+                    </div>
+                  </article>
+                ))}
+
+                {riskGroups.length > visibleRiskGroupLimit ? (
+                  <button
+                    className="ghost-link risk-toggle"
+                    type="button"
+                    onClick={() => setShowAllRisks((current) => !current)}
+                  >
+                    {showAllRisks
+                      ? 'Mostrar menos riesgos'
+                      : `Mostrar los ${riskGroups.length} grupos de riesgo`}
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </section>
@@ -1099,17 +1438,20 @@ function HomePage() {
           <section className="subpanel">
             <div className="subpanel-head">
               <div>
-                <p className="section-label">DataFrame output</p>
-                <h3>Parsed rows ready for backend</h3>
+                <p className="section-label">Salida DataFrame</p>
+                <h3>Filas procesadas listas para backend</h3>
               </div>
             </div>
 
             <div className="dataframe-meta">
-              <span>Sheet: {activeSheet?.name}</span>
+              <span>Hoja: {activeSheet?.name}</span>
               <span>
-                Keys: {activeSheet?.dataframe.columnKeys.join(', ') || 'None'}
+                Claves:{' '}
+                {activeSheet?.dataframe.columnKeys.join(', ') || 'Ninguna'}
               </span>
-              <span>Total rows: {activeSheet?.dataframe.totalRows ?? 0}</span>
+              <span>
+                Total de filas: {activeSheet?.dataframe.totalRows ?? 0}
+              </span>
             </div>
 
             <pre className="code-preview">
@@ -1119,14 +1461,12 @@ function HomePage() {
         </section>
       ) : (
         <section className="panel empty-simulation">
-          <p className="section-label">Before upload</p>
-          <h2>
-            Simulation views will unlock after the purchase order is loaded
-          </h2>
+          <p className="section-label">Antes de cargar</p>
+          <h2>La simulacion se habilita despues de subir la orden de compra</h2>
           <p className="panel-copy">
-            The next visible layer will be a real-time scenario board, chamber
-            fill, pallet and container math, plus a calendar showing each order
-            over time.
+            La siguiente capa visible sera un tablero en tiempo real con
+            ocupacion de camaras, calculo de pallets y contenedores, y un
+            calendario que muestra cada necesidad en el tiempo.
           </p>
         </section>
       )}

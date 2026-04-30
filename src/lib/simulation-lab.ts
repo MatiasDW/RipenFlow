@@ -32,6 +32,14 @@ const fieldAliases = {
   center: ['center', 'centro', 'centro_codigo'],
   provider: ['provider', 'proveedor'],
   ripener: ['ripener', 'madurador'],
+  purchaseOrderRef: [
+    'purchase_order',
+    'purchase_order_ref',
+    'order_reference',
+    'oc',
+    'orden_compra',
+    'orden_de_compra',
+  ],
 } as const
 
 const requiredFieldAliases = {
@@ -46,6 +54,7 @@ export type DemandOrder = {
   center: string
   provider: string
   ripener: string
+  purchaseOrderRef: string
   recipeProgramCode: string | null
   recipeTargetColorGrade: string | null
   recipeTotalHours: number | null
@@ -102,6 +111,7 @@ export type TimelineOrder = DemandOrder & {
 type ChamberSchedule = {
   name: string
   bookedPalletsByDay: Map<string, number>
+  bookedProductGroupByDay: Map<string, string>
 }
 
 type ChamberUsage = {
@@ -176,14 +186,6 @@ function differenceInDays(start: Date, end: Date) {
   return Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
 }
 
-function formatCurrency(value: number) {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 0,
-  }).format(value)
-}
-
 function getPriorityWeight(priority: string) {
   const normalizedPriority = priority.trim().toLowerCase()
 
@@ -245,15 +247,67 @@ function buildScheduleWindow(startDate: Date, endDate: Date) {
   return windowDays
 }
 
+function normalizeProductGroupKey(product: string) {
+  return product
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replaceAll(/\p{Diacritic}/gu, '')
+    .replaceAll(/[^a-z0-9]+/g, '-')
+    .replaceAll(/^-+|-+$/g, '')
+}
+
+function inferChamberProductGroup(product: string) {
+  const normalizedProduct = normalizeProductGroupKey(product)
+
+  if (
+    normalizedProduct.includes('platano') ||
+    normalizedProduct.includes('banana') ||
+    normalizedProduct.includes('banano') ||
+    normalizedProduct.includes('cavendish')
+  ) {
+    return {
+      key: 'platano',
+      label: 'platano',
+    }
+  }
+
+  if (
+    normalizedProduct.includes('palta') ||
+    normalizedProduct.includes('avocado') ||
+    normalizedProduct.includes('aguacate')
+  ) {
+    return {
+      key: 'palta',
+      label: 'palta',
+    }
+  }
+
+  return {
+    key: normalizedProduct || 'producto-generico',
+    label: product.trim() || 'producto generico',
+  }
+}
+
 function scoreChamberWindow(
   chamber: ChamberSchedule,
   windowDays: string[],
   pallets: number,
+  productGroupKey: string,
 ) {
   let peakOccupancy = 0
   let totalOccupancy = 0
+  let mixedProductDays = 0
+  const conflictingProductGroups = new Set<string>()
 
   for (const day of windowDays) {
+    const bookedProductGroup = chamber.bookedProductGroupByDay.get(day)
+
+    if (bookedProductGroup && bookedProductGroup !== productGroupKey) {
+      mixedProductDays += 1
+      conflictingProductGroups.add(bookedProductGroup)
+    }
+
     const nextOccupancy = (chamber.bookedPalletsByDay.get(day) ?? 0) + pallets
     peakOccupancy = Math.max(peakOccupancy, nextOccupancy)
     totalOccupancy += nextOccupancy
@@ -262,6 +316,8 @@ function scoreChamberWindow(
   return {
     peakOccupancy,
     totalOccupancy,
+    mixedProductDays,
+    conflictingProductGroups: [...conflictingProductGroups],
     overflowPallets: Math.max(peakOccupancy - PALLETS_PER_CHAMBER, 0),
     activatesNewChamber: chamber.bookedPalletsByDay.size === 0 ? 1 : 0,
     headroomAfterPlacement: Math.max(PALLETS_PER_CHAMBER - peakOccupancy, 0),
@@ -272,21 +328,26 @@ function reserveChamberWindow(
   chamber: ChamberSchedule,
   windowDays: string[],
   pallets: number,
+  productGroupKey: string,
 ) {
   for (const day of windowDays) {
     chamber.bookedPalletsByDay.set(
       day,
       (chamber.bookedPalletsByDay.get(day) ?? 0) + pallets,
     )
+
+    if (!chamber.bookedProductGroupByDay.has(day)) {
+      chamber.bookedProductGroupByDay.set(day, productGroupKey)
+    }
   }
 }
 
 function getChamberName(index: number) {
   if (index < 26) {
-    return `Chamber ${String.fromCharCode(65 + index)}`
+    return `Camara ${String.fromCharCode(65 + index)}`
   }
 
-  return `Chamber ${index + 1}`
+  return `Camara ${index + 1}`
 }
 
 function buildChamberNames(chamberCount: number) {
@@ -324,6 +385,7 @@ export function buildSimulationSummary(
     (name) => ({
       name,
       bookedPalletsByDay: new Map<string, number>(),
+      bookedProductGroupByDay: new Map<string, string>(),
     }),
   )
 
@@ -348,18 +410,23 @@ export function buildSimulationSummary(
       const center = pickField(row, fieldAliases.center, 'Unassigned center')
       const provider = pickField(row, fieldAliases.provider, '')
       const ripener = pickField(row, fieldAliases.ripener, '')
+      const purchaseOrderRef = pickField(row, fieldAliases.purchaseOrderRef, '')
       const dueDate = parseDateValue(
         pickField(row, fieldAliases.requiredDate, ''),
         index + 2,
       )
+      const productGroup = inferChamberProductGroup(product)
       const pallets = Math.max(Math.ceil(quantityBoxes / BOXES_PER_PALLET), 1)
       const containers = Number((pallets / PALLETS_PER_CONTAINER).toFixed(2))
       return {
         id: `order-${index + 1}`,
         product,
+        productGroupKey: productGroup.key,
+        productGroupLabel: productGroup.label,
         center,
         provider,
         ripener,
+        purchaseOrderRef,
         dueDate,
         quantityBoxes,
         pallets,
@@ -405,6 +472,8 @@ export function buildSimulationSummary(
         headroomAfterPlacement: number
         cycleDays: number
         recipePenalty: number
+        mixedProductDays: number
+        conflictingProductGroups: string[]
       } | null = null
       const candidateRecipes = listRipeningRecipes(order.product)
       const recipeCandidates =
@@ -450,6 +519,7 @@ export function buildSimulationSummary(
               chamber,
               candidateWindow,
               order.pallets,
+              order.productGroupKey,
             )
             const candidatePlan = {
               chamber,
@@ -466,6 +536,8 @@ export function buildSimulationSummary(
               headroomAfterPlacement: score.headroomAfterPlacement,
               cycleDays: recipeCycleDays,
               recipePenalty,
+              mixedProductDays: score.mixedProductDays,
+              conflictingProductGroups: score.conflictingProductGroups,
             }
 
             if (!bestPlan) {
@@ -474,6 +546,7 @@ export function buildSimulationSummary(
             }
 
             const candidateScore =
+              candidatePlan.mixedProductDays * 1_000_000_000 +
               candidatePlan.overflowPallets * 1_000_000 +
               candidatePlan.lookbackDays * 10_000 +
               candidatePlan.activatesNewChamber * 1_000 +
@@ -481,6 +554,7 @@ export function buildSimulationSummary(
               candidatePlan.recipePenalty +
               candidatePlan.totalOccupancy
             const bestScore =
+              bestPlan.mixedProductDays * 1_000_000_000 +
               bestPlan.overflowPallets * 1_000_000 +
               bestPlan.lookbackDays * 10_000 +
               bestPlan.activatesNewChamber * 1_000 +
@@ -524,28 +598,33 @@ export function buildSimulationSummary(
         ),
         cycleDays: order.cycleDays,
         recipePenalty: 0,
+        mixedProductDays: 0,
+        conflictingProductGroups: [],
       }
 
       reserveChamberWindow(
         finalPlan.chamber,
         finalPlan.windowDays,
         order.pallets,
+        order.productGroupKey,
       )
 
       const scenarioStatus =
-        finalPlan.overflowPallets > 0
+        finalPlan.mixedProductDays > 0 || finalPlan.overflowPallets > 0
           ? 'late_risk'
           : finalPlan.cycleDays >= 5 || finalPlan.lookbackDays > 0
             ? 'in_ripening'
             : 'ready'
       const riskNote =
-        finalPlan.overflowPallets > 0
-          ? `${finalPlan.chamber.name} exceeds nominal capacity by ${finalPlan.overflowPallets} pallet(s) before ${toIsoDate(order.dueDate)}.`
-          : finalPlan.lookbackDays > 0
-            ? `Pulled ${finalPlan.lookbackDays} day(s) earlier to keep ${finalPlan.chamber.name} within capacity before ${toIsoDate(order.dueDate)}.`
-            : finalPlan.cycleDays >= 6
-              ? `Requires a ${finalPlan.cycleDays}-day ripening cycle before ${toIsoDate(order.dueDate)}.`
-              : null
+        finalPlan.mixedProductDays > 0
+          ? `${finalPlan.chamber.name} mezcla ${order.productGroupLabel} con ${finalPlan.conflictingProductGroups.join(', ')} durante ${finalPlan.mixedProductDays} dia(s). Cada camara debe madurar una sola familia de producto a la vez.`
+          : finalPlan.overflowPallets > 0
+            ? `${finalPlan.chamber.name} supera la capacidad nominal por ${finalPlan.overflowPallets} pallet(s) antes de ${toIsoDate(order.dueDate)}.`
+            : finalPlan.lookbackDays > 0
+              ? `Se adelanto ${finalPlan.lookbackDays} dia(s) para mantener ${finalPlan.chamber.name} dentro de capacidad antes de ${toIsoDate(order.dueDate)}.`
+              : finalPlan.cycleDays >= 6
+                ? `Requiere un ciclo de maduracion de ${finalPlan.cycleDays} dias antes de ${toIsoDate(order.dueDate)}.`
+                : null
 
       return {
         id: order.id,
@@ -553,6 +632,7 @@ export function buildSimulationSummary(
         center: order.center,
         provider: order.provider,
         ripener: order.ripener,
+        purchaseOrderRef: order.purchaseOrderRef,
         recipeProgramCode: finalPlan.recipeProgramCode,
         recipeTargetColorGrade: finalPlan.recipeTargetColorGrade,
         recipeTotalHours: finalPlan.recipeTotalHours,
@@ -634,13 +714,14 @@ export function buildSimulationSummary(
     dateRange,
     missingFields,
     assumptions: [
-      'Quantity is interpreted as boxes.',
-      `Pallet conversion uses ${BOXES_PER_PALLET} boxes per pallet.`,
-      `Container conversion uses ${PALLETS_PER_CONTAINER} pallets per container.`,
-      'Each order line is tested against the seeded ripening cycle catalog before chamber assignment.',
-      'Recipe choice is optimized together with chamber assignment using due-date protection first and chamber minimization second.',
-      'Chamber assignment now prefers fewer active chambers unless that would increase lateness or overflow.',
-      'Displayed chamber occupancy reflects peak concurrent pallet load, not the raw sum of all pallets across the entire file.',
+      'Quantity se interpreta como cajas.',
+      `La conversion a pallet usa ${BOXES_PER_PALLET} cajas por pallet.`,
+      `La conversion a contenedor usa ${PALLETS_PER_CONTAINER} pallets por contenedor.`,
+      'Cada linea se contrasta con el catalogo de ciclos de maduracion antes de asignar camara.',
+      'La receta se optimiza junto con la asignacion de camara priorizando fecha primero y minimizacion de camaras despues.',
+      'La asignacion de camaras prefiere menos camaras activas salvo que eso aumente atraso o overflow.',
+      'Cada camara solo puede madurar una familia de producto a la vez: platano o palta, sin mezcla en dias superpuestos.',
+      'La ocupacion mostrada refleja la carga concurrente maxima, no la suma bruta de todos los pallets del archivo.',
     ],
   }
 }
@@ -649,41 +730,38 @@ export function buildSimulationMetrics(
   summary: SimulationSummary,
   progress: number,
 ): SimulationMetric[] {
-  const filledContainers = Math.round(summary.totalContainers * progress)
+  const activeChambers = summary.chamberUsage.filter(
+    (chamber) => chamber.activated,
+  ).length
   const allocatedPallets = Math.round(summary.totalPallets * progress)
   const fulfilledBoxes = Math.round(
     summary.totalBoxes * Math.min(progress * 1.08, 1),
   )
-  const lateRiskOrders = summary.orders.filter(
-    (order) => order.scenarioStatus === 'late_risk',
-  ).length
-  const economicExposure = summary.totalRevenue * (1 - progress) * 0.18
 
   return [
     {
-      label: 'Containers filling',
-      value: `${filledContainers}/${summary.totalContainers}`,
-      hint: 'Visible chamber load as the scenario progresses.',
-      tone:
-        filledContainers >= summary.totalContainers ? 'positive' : 'neutral',
+      label: 'Contenedores estimados',
+      value: `${summary.totalContainers}`,
+      hint: 'Equivalencia logistica total derivada del volumen cargado.',
+      tone: 'neutral',
     },
     {
-      label: 'Pallets staged',
+      label: 'Pallets preparados',
       value: `${allocatedPallets}/${summary.totalPallets}`,
-      hint: 'Pallet requirement derived from uploaded demand.',
+      hint: 'Requerimiento de pallets derivado del archivo cargado.',
       tone: 'positive',
     },
     {
-      label: 'Boxes assigned',
+      label: 'Cajas asignadas',
       value: `${fulfilledBoxes}/${summary.totalBoxes}`,
-      hint: 'Demand allocation progressing against uploaded orders.',
+      hint: 'Asignacion de demanda avanzando sobre el archivo cargado.',
       tone: fulfilledBoxes >= summary.totalBoxes ? 'positive' : 'neutral',
     },
     {
-      label: 'Economic exposure',
-      value: formatCurrency(economicExposure),
-      hint: `${lateRiskOrders} order(s) still show due-date risk.`,
-      tone: economicExposure <= 0 ? 'positive' : 'warning',
+      label: 'Camaras activas',
+      value: `${activeChambers}/${summary.chamberNames.length}`,
+      hint: 'Cantidad real de camaras que el plan esta usando en el calendario.',
+      tone: 'positive',
     },
   ]
 }
@@ -745,10 +823,10 @@ export function buildChamberFill(summary: SimulationSummary, progress: number) {
         issueNote:
           data.issueNote ??
           (usage?.activated
-            ? `Peak concurrent load reaches ${usage.peakBookedPallets}/${PALLETS_PER_CHAMBER} pallets across ${usage.usedDays} active day(s).`
+            ? `La carga concurrente maxima llega a ${usage.peakBookedPallets}/${PALLETS_PER_CHAMBER} pallets en ${usage.usedDays} dia(s) activos.`
             : null) ??
           (isUnavailable
-            ? 'Marked as already occupied before this planning run.'
+            ? 'Marcada como ocupada antes de esta corrida de planificacion.'
             : null),
         status,
         hasIssue: isUnavailable || data.lateRiskOrders > 0,
