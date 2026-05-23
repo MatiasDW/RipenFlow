@@ -14,12 +14,33 @@ export const purchaseOrderImports = pgTable('purchase_order_imports', {
   id: uuid('id').defaultRandom().primaryKey(),
   sourceFileName: varchar('source_file_name', { length: 255 }).notNull(),
   sourceExtension: varchar('source_extension', { length: 16 }).notNull(),
+  sourceFileSizeBytes: integer('source_file_size_bytes'),
   totalSheets: integer('total_sheets').notNull(),
   totalRows: integer('total_rows').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true })
     .defaultNow()
     .notNull(),
 })
+
+export const chamberConfigs = pgTable(
+  'chamber_configs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    chamberName: varchar('chamber_name', { length: 64 }).notNull(),
+    mode: varchar('mode', { length: 32 }).notNull().default('ripening'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => ({
+    chamberNameKey: uniqueIndex('chamber_configs_chamber_name_key').on(
+      table.chamberName,
+    ),
+  }),
+)
 
 export const purchaseOrderImportRows = pgTable('purchase_order_import_rows', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -33,6 +54,13 @@ export const purchaseOrderImportRows = pgTable('purchase_order_import_rows', {
   price: varchar('price', { length: 64 }),
   amount: varchar('amount', { length: 64 }),
   product: varchar('product', { length: 255 }),
+  center: varchar('center', { length: 255 }),
+  provider: varchar('provider', { length: 255 }),
+  ripener: varchar('ripener', { length: 255 }),
+  purchaseOrderRef: varchar('purchase_order_ref', { length: 255 }),
+  skuFamily: varchar('sku_family', { length: 255 }),
+  unitOfMeasure: varchar('unit_of_measure', { length: 64 }),
+  sourceSheet: varchar('source_sheet', { length: 128 }),
   rawData: jsonb('raw_data').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true })
     .defaultNow()
