@@ -54,6 +54,92 @@ async function handleApiRequest(request: Request) {
     }
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/planning-state') {
+    try {
+      const { listPlanningState } = await import('./purchase-orders')
+
+      return jsonResponse(await listPlanningState())
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to load planning state'
+
+      return jsonResponse(
+        {
+          ok: false,
+          error: message,
+        },
+        500,
+      )
+    }
+  }
+
+  if (
+    request.method === 'POST' &&
+    url.pathname === '/api/purchase-orders/imports'
+  ) {
+    try {
+      const payload = await request.json()
+      const { persistImportedWorkbook } = await import('./purchase-orders')
+
+      return jsonResponse(await persistImportedWorkbook(payload), 201)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to persist import'
+
+      return jsonResponse(
+        {
+          ok: false,
+          error: message,
+        },
+        400,
+      )
+    }
+  }
+
+  if (request.method === 'PUT' && url.pathname === '/api/planning-state') {
+    try {
+      const payload = await request.json()
+      const { replacePlanningWorkbook } = await import('./purchase-orders')
+
+      return jsonResponse(await replacePlanningWorkbook(payload))
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Failed to replace planning state'
+
+      return jsonResponse(
+        {
+          ok: false,
+          error: message,
+        },
+        400,
+      )
+    }
+  }
+
+  if (request.method === 'PUT' && url.pathname === '/api/chamber-config') {
+    try {
+      const payload = await request.json()
+      const { persistChamberConfig } = await import('./purchase-orders')
+
+      return jsonResponse(await persistChamberConfig(payload))
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Failed to persist chamber config'
+
+      return jsonResponse(
+        {
+          ok: false,
+          error: message,
+        },
+        400,
+      )
+    }
+  }
+
   return null
 }
 
