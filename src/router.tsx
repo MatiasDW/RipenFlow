@@ -531,8 +531,12 @@ function formatTimeLabel(totalMinutes: number) {
 function buildSchedulerHourLabels() {
   return Array.from(
     { length: SCHEDULER_DAY_END_HOUR - SCHEDULER_DAY_START_HOUR + 1 },
-    (_, index) =>
-      `${String(SCHEDULER_DAY_START_HOUR + index).padStart(2, '0')}:00`,
+    (_, index) => {
+      const hour = SCHEDULER_DAY_START_HOUR + index
+      const displayHour = hour === SCHEDULER_DAY_END_HOUR ? 0 : hour
+
+      return `${String(displayHour).padStart(2, '0')}:00`
+    },
   )
 }
 
