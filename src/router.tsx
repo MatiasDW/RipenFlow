@@ -88,29 +88,6 @@ type DailyFlowChamberRow = {
   activeLineCount: number
 }
 
-type FlowBoardSelection = {
-  chamberName: string
-  startDate: string
-  endDate: string
-}
-
-type TimelineBarGroup = {
-  id: string
-  chamberName: string
-  product: string
-  recipeLabel: string
-  startIndex: number
-  endIndex: number
-  lane: number
-  quantityBoxes: number
-  pallets: number
-  sourceRowIndexes: number[]
-  requiredDates: string[]
-  riskNote: string | null
-  scenarioStatus: TimelineOrder['scenarioStatus']
-  deliveryCount: number
-}
-
 type DailyFlowBoard = {
   days: DailyFlowDay[]
   chamberRows: DailyFlowChamberRow[]
@@ -118,10 +95,36 @@ type DailyFlowBoard = {
 
 type ChamberMode = 'ripening' | 'conservation' | 'occupied'
 
+type CalendarViewMode = 'day' | 'week' | 'month'
+
+type SchedulerOperationType = 'inbound' | 'outbound'
+
+type SchedulerOperationEvent = {
+  id: string
+  date: string
+  chamberName: string
+  product: string
+  productGroupLabel: string
+  recipeLabel: string
+  operationType: SchedulerOperationType
+  quantityBoxes: number
+  startMinute: number
+  endMinute: number
+  lane: number
+  laneCount: number
+  sourceRowIndexes: number[]
+  purchaseOrders: string[]
+  riskNote: string | null
+}
+
 type RecipeOverride = {
   programCode: string
   targetColorGrade: string
 }
+
+const SCHEDULER_DAY_START_HOUR = 0
+const SCHEDULER_DAY_END_HOUR = 24
+const SCHEDULER_HOUR_ROW_HEIGHT = 44
 
 type PlanningEditorDraft = {
   sourceRowIndex: number | null
@@ -239,6 +242,44 @@ function formatWeekLabel(date: string) {
     )
 
   return `SEM ${String(weekNumber).padStart(2, '0')}`
+}
+
+function getVisualWeekStart(date: string) {
+  const normalizedDate = normalizeSortValue(date)
+
+  if (!normalizedDate) {
+    return ''
+  }
+
+  const parsedDate = new Date(`${normalizedDate}T00:00:00`)
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return normalizedDate
+  }
+
+  const sunday = new Date(parsedDate)
+  sunday.setDate(parsedDate.getDate() - parsedDate.getDay())
+
+  return sunday.toISOString().slice(0, 10)
+}
+
+function formatMonthLabel(date: string) {
+  const normalizedDate = normalizeSortValue(date)
+
+  if (!normalizedDate) {
+    return ''
+  }
+
+  const parsedDate = new Date(`${normalizedDate}T00:00:00`)
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return normalizedDate
+  }
+
+  return new Intl.DateTimeFormat('es-CL', {
+    month: 'long',
+    year: 'numeric',
+  }).format(parsedDate)
 }
 
 function buildDailyFlowBoard(
@@ -412,202 +453,6 @@ function normalizeSearchValue(value: string) {
   return value.trim().toLowerCase()
 }
 
-function summarizeFlowBoardValues(values: string[]) {
-  return [...new Set(values.filter(Boolean))]
-}
-
-function buildFlowBoardCellTitle(
-  chamberRow: DailyFlowChamberRow,
-  date: string,
-  inbound: number,
-  outbound: number,
-) {
-  const activeProducts = summarizeFlowBoardValues(
-    chamberRow.activeProductsByDate[date] ?? [],
-  )
-  const outboundProducts = summarizeFlowBoardValues(
-    chamberRow.outboundProductsByDate[date] ?? [],
-  )
-  const purchaseOrders = summarizeFlowBoardValues(
-    chamberRow.purchaseOrdersByDate[date] ?? [],
-  )
-
-  const parts = [
-    chamberRow.name,
-    formatCalendarDate(date),
-    activeProducts.length > 0
-      ? `Producto: ${activeProducts.join(', ')}`
-      : 'Sin producto activo',
-    inbound > 0 ? `Ingreso: ${inbound}` : '',
-    outbound > 0 ? `Salida: ${outbound}` : '',
-    outboundProducts.length > 0 ? `Sale: ${outboundProducts.join(', ')}` : '',
-    purchaseOrders.length > 0 ? `OC: ${purchaseOrders.join(', ')}` : '',
-  ]
-
-  return parts.filter(Boolean).join('\n')
-}
-
-function buildFlowSelectionSummary(
-  chamberRow: DailyFlowChamberRow | undefined,
-  selection: FlowBoardSelection | null,
-  dateRange: string[],
-) {
-  if (!selection || !chamberRow) {
-    return null
-  }
-
-  const startIndex = dateRange.indexOf(selection.startDate)
-  const endIndex = dateRange.indexOf(selection.endDate)
-
-  if (startIndex === -1 || endIndex === -1) {
-    return null
-  }
-
-  const [fromIndex, toIndex] =
-    startIndex <= endIndex ? [startIndex, endIndex] : [endIndex, startIndex]
-  const selectedDates = dateRange.slice(fromIndex, toIndex + 1)
-  const products = new Set<string>()
-  const purchaseOrders = new Set<string>()
-  let inboundTotal = 0
-  let outboundTotal = 0
-
-  for (const date of selectedDates) {
-    inboundTotal += chamberRow.inboundByDate[date] ?? 0
-    outboundTotal += chamberRow.outboundByDate[date] ?? 0
-
-    for (const product of chamberRow.activeProductsByDate[date] ?? []) {
-      if (product) {
-        products.add(product)
-      }
-    }
-
-    for (const purchaseOrder of chamberRow.purchaseOrdersByDate[date] ?? []) {
-      if (purchaseOrder) {
-        purchaseOrders.add(purchaseOrder)
-      }
-    }
-  }
-
-  return {
-    chamberName: chamberRow.name,
-    fromDate: selectedDates[0],
-    toDate: selectedDates.at(-1) ?? selectedDates[0],
-    inboundTotal,
-    outboundTotal,
-    products: [...products],
-    purchaseOrders: [...purchaseOrders],
-    dayCount: selectedDates.length,
-  }
-}
-
-function isDateInsideFlowSelection(
-  selection: FlowBoardSelection,
-  date: string,
-) {
-  const [fromDate, toDate] =
-    compareTextValues(selection.startDate, selection.endDate) <= 0
-      ? [selection.startDate, selection.endDate]
-      : [selection.endDate, selection.startDate]
-
-  return (
-    compareTextValues(fromDate, date) <= 0 &&
-    compareTextValues(toDate, date) >= 0
-  )
-}
-
-function buildTimelineBarGroups(orders: TimelineOrder[]) {
-  const groupedByChamber = new Map<string, TimelineBarGroup[]>()
-
-  const sortedOrders = [...orders].sort(
-    (left, right) =>
-      compareTextValues(left.chamberName, right.chamberName) ||
-      left.startIndex - right.startIndex ||
-      compareTextValues(left.product, right.product),
-  )
-
-  for (const order of sortedOrders) {
-    const chamberGroups = groupedByChamber.get(order.chamberName) ?? []
-    const recipeLabel = buildRecipeLabel(order)
-    const endIndex = order.startIndex + order.span - 1
-    const previousGroup = chamberGroups.at(-1)
-
-    if (
-      previousGroup &&
-      previousGroup.product === order.product &&
-      previousGroup.recipeLabel === recipeLabel &&
-      previousGroup.scenarioStatus === order.scenarioStatus &&
-      order.startIndex <= previousGroup.endIndex + 1
-    ) {
-      previousGroup.endIndex = Math.max(previousGroup.endIndex, endIndex)
-      previousGroup.quantityBoxes += order.quantityBoxes
-      previousGroup.pallets += order.pallets
-      previousGroup.sourceRowIndexes = [
-        ...new Set([...previousGroup.sourceRowIndexes, order.sourceRowIndex]),
-      ]
-      previousGroup.requiredDates = [
-        ...new Set([...previousGroup.requiredDates, order.requiredDate]),
-      ].sort(compareTextValues)
-      previousGroup.deliveryCount = previousGroup.requiredDates.length
-      previousGroup.riskNote = previousGroup.riskNote ?? order.riskNote
-      continue
-    }
-
-    chamberGroups.push({
-      id: `${order.chamberName}-${order.product}-${order.startIndex}-${order.requiredDate}-${order.sourceRowIndex}`,
-      chamberName: order.chamberName,
-      product: order.product,
-      recipeLabel,
-      startIndex: order.startIndex,
-      endIndex,
-      lane: 0,
-      quantityBoxes: order.quantityBoxes,
-      pallets: order.pallets,
-      sourceRowIndexes: [order.sourceRowIndex],
-      requiredDates: [order.requiredDate],
-      riskNote: order.riskNote,
-      scenarioStatus: order.scenarioStatus,
-      deliveryCount: 1,
-    })
-
-    groupedByChamber.set(order.chamberName, chamberGroups)
-  }
-
-  for (const chamberGroups of groupedByChamber.values()) {
-    const laneEndIndexes: number[] = []
-
-    for (const group of chamberGroups) {
-      let assignedLane = laneEndIndexes.findIndex(
-        (laneEndIndex) => laneEndIndex < group.startIndex,
-      )
-
-      if (assignedLane === -1) {
-        assignedLane = laneEndIndexes.length
-        laneEndIndexes.push(group.endIndex)
-      } else {
-        laneEndIndexes[assignedLane] = group.endIndex
-      }
-
-      group.lane = assignedLane
-    }
-  }
-
-  return groupedByChamber
-}
-
-function buildGroupedBarViewerPayload(
-  group: TimelineBarGroup,
-  chamberName: string,
-  activeSheet: ParsedWorkbook['sheets'][number] | null,
-) {
-  return {
-    title: group.product,
-    subtitle: `${chamberName} · ${group.deliveryCount} entrega(s)`,
-    sourceRowIndexes: group.sourceRowIndexes.filter((sourceRowIndex) =>
-      Boolean(activeSheet?.dataframe.rows[sourceRowIndex]),
-    ),
-  }
-}
-
 function buildFlowBoardChamberStatus(row: DailyFlowChamberRow) {
   if (row.mode === 'conservation') {
     return 'Conservacion'
@@ -676,6 +521,179 @@ function buildRecipeLabel(recipe: {
   return `${recipe.recipeProgramCode} ${recipe.recipeTargetColorGrade}${cycleDays}`
 }
 
+function formatTimeLabel(totalMinutes: number) {
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+}
+
+function buildSchedulerHourLabels() {
+  return Array.from(
+    { length: SCHEDULER_DAY_END_HOUR - SCHEDULER_DAY_START_HOUR + 1 },
+    (_, index) =>
+      `${String(SCHEDULER_DAY_START_HOUR + index).padStart(2, '0')}:00`,
+  )
+}
+
+function getChamberSequenceIndex(chamberName: string) {
+  const match = chamberName.match(/([A-Z])$/i)
+
+  if (!match) {
+    return 0
+  }
+
+  return Math.max(match[1].toUpperCase().charCodeAt(0) - 65, 0)
+}
+
+function buildSchedulerOperationWindow(
+  chamberName: string,
+  productGroupLabel: string,
+  operationType: SchedulerOperationType,
+) {
+  const chamberOffset = (getChamberSequenceIndex(chamberName) % 3) * 30
+  const productBase =
+    productGroupLabel === 'palta'
+      ? operationType === 'inbound'
+        ? 12 * 60
+        : 15 * 60
+      : operationType === 'inbound'
+        ? 8 * 60 + 30
+        : 10 * 60
+
+  const startMinute = productBase + chamberOffset
+  const endMinute = Math.min(startMinute + 90, SCHEDULER_DAY_END_HOUR * 60)
+
+  return { startMinute, endMinute }
+}
+
+function buildSchedulerOperationEvents(
+  orders: TimelineOrder[],
+  visibleDates: Set<string>,
+) {
+  const groupedEvents = new Map<string, SchedulerOperationEvent>()
+
+  for (const order of orders) {
+    const recipeLabel = buildRecipeLabel(order)
+    const operations: Array<{
+      date: string
+      operationType: SchedulerOperationType
+      quantityBoxes: number
+    }> = [
+      {
+        date: order.startDate,
+        operationType: 'inbound',
+        quantityBoxes: order.quantityBoxes,
+      },
+      {
+        date: order.requiredDate,
+        operationType: 'outbound',
+        quantityBoxes: order.quantityBoxes,
+      },
+    ]
+
+    for (const operation of operations) {
+      if (!visibleDates.has(operation.date)) {
+        continue
+      }
+
+      const window = buildSchedulerOperationWindow(
+        order.chamberName,
+        order.productGroupLabel,
+        operation.operationType,
+      )
+      const eventKey = [
+        operation.date,
+        operation.operationType,
+        order.chamberName,
+        order.product,
+        recipeLabel,
+      ].join('::')
+      const existingEvent = groupedEvents.get(eventKey)
+
+      if (existingEvent) {
+        existingEvent.quantityBoxes += operation.quantityBoxes
+        existingEvent.sourceRowIndexes = [
+          ...new Set([...existingEvent.sourceRowIndexes, order.sourceRowIndex]),
+        ]
+        existingEvent.purchaseOrders = [
+          ...new Set([
+            ...existingEvent.purchaseOrders,
+            order.purchaseOrderRef || order.id,
+          ]),
+        ]
+        existingEvent.riskNote ??= order.riskNote
+        continue
+      }
+
+      groupedEvents.set(eventKey, {
+        id: eventKey,
+        date: operation.date,
+        chamberName: order.chamberName,
+        product: order.product,
+        productGroupLabel: order.productGroupLabel,
+        recipeLabel,
+        operationType: operation.operationType,
+        quantityBoxes: operation.quantityBoxes,
+        startMinute: window.startMinute,
+        endMinute: window.endMinute,
+        lane: 0,
+        laneCount: 1,
+        sourceRowIndexes: [order.sourceRowIndex],
+        purchaseOrders: [order.purchaseOrderRef || order.id],
+        riskNote: order.riskNote,
+      })
+    }
+  }
+
+  const groupedByDate = new Map<string, SchedulerOperationEvent[]>()
+
+  for (const event of groupedEvents.values()) {
+    const dayEvents = groupedByDate.get(event.date) ?? []
+    dayEvents.push(event)
+    groupedByDate.set(event.date, dayEvents)
+  }
+
+  for (const dayEvents of groupedByDate.values()) {
+    dayEvents.sort((left, right) => {
+      if (left.startMinute !== right.startMinute) {
+        return left.startMinute - right.startMinute
+      }
+
+      if (left.endMinute !== right.endMinute) {
+        return left.endMinute - right.endMinute
+      }
+
+      return left.product.localeCompare(right.product)
+    })
+
+    const laneEndMinutes: number[] = []
+
+    for (const event of dayEvents) {
+      let assignedLane = laneEndMinutes.findIndex(
+        (laneEndMinute) => laneEndMinute <= event.startMinute,
+      )
+
+      if (assignedLane === -1) {
+        assignedLane = laneEndMinutes.length
+        laneEndMinutes.push(event.endMinute)
+      } else {
+        laneEndMinutes[assignedLane] = event.endMinute
+      }
+
+      event.lane = assignedLane
+    }
+
+    const laneCount = Math.max(laneEndMinutes.length, 1)
+
+    for (const event of dayEvents) {
+      event.laneCount = laneCount
+    }
+  }
+
+  return groupedByDate
+}
+
 function buildPlanningEditorDraft(
   row?: Record<string, string>,
   sourceRowIndex: number | null = null,
@@ -702,20 +720,6 @@ function normalizeChamberMode(value: string | null | undefined): ChamberMode {
   }
 
   return 'ripening'
-}
-
-function compareIsoDateStrings(left: string, right: string) {
-  return left.localeCompare(right)
-}
-
-function isDateWithinOrderWindow(
-  order: Pick<TimelineOrder, 'startDate' | 'requiredDate'>,
-  date: string,
-) {
-  return (
-    compareIsoDateStrings(order.startDate, date) <= 0 &&
-    compareIsoDateStrings(order.requiredDate, date) >= 0
-  )
 }
 
 function addDaysToIsoDate(date: string, amount: number) {
@@ -814,7 +818,6 @@ function HomePage() {
   const inputId = useId()
   const inputRef = useRef<HTMLInputElement | null>(null)
   const readRequestRef = useRef(0)
-  const flowSelectionSuppressClickRef = useRef(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [isReadingFile, setIsReadingFile] = useState(false)
   const [parsedWorkbook, setParsedWorkbook] = useState<ParsedWorkbook | null>(
@@ -828,13 +831,12 @@ function HomePage() {
   const [isPlanningOpen, setIsPlanningOpen] = useState(true)
   const [calendarSearch, setCalendarSearch] = useState('')
   const [calendarProductFilter, setCalendarProductFilter] = useState('all')
+  const [selectedChamberNames, setSelectedChamberNames] = useState<string[]>([])
+  const [calendarViewMode, setCalendarViewMode] =
+    useState<CalendarViewMode>('week')
+  const [calendarAnchorDate, setCalendarAnchorDate] = useState('')
   const [groupedBarViewer, setGroupedBarViewer] =
     useState<GroupedBarViewer | null>(null)
-  const [flowSelectionDraft, setFlowSelectionDraft] =
-    useState<FlowBoardSelection | null>(null)
-  const [flowSelection, setFlowSelection] = useState<FlowBoardSelection | null>(
-    null,
-  )
   const [recipeOverrides, setRecipeOverrides] = useState<
     Record<string, RecipeOverride>
   >({})
@@ -879,9 +881,6 @@ function HomePage() {
   const chamberFill = simulationSummary
     ? buildChamberFill(simulationSummary, 1)
     : []
-  const productFilterOptions = [
-    ...new Set(timelineOrders.map((order) => order.product).filter(Boolean)),
-  ].sort(compareTextValues)
   const purchaseOrderFilterOptions = [
     ...new Set(
       timelineOrders.map((order) => order.purchaseOrderRef).filter(Boolean),
@@ -903,7 +902,8 @@ function HomePage() {
   const normalizedCalendarSearch = normalizeSearchValue(calendarSearch)
   const filteredTimelineOrders = timelineOrders.filter((order) => {
     const matchesProduct =
-      calendarProductFilter === 'all' || order.product === calendarProductFilter
+      calendarProductFilter === 'all' ||
+      order.productGroupLabel === calendarProductFilter
 
     if (!matchesProduct) {
       return false
@@ -926,6 +926,12 @@ function HomePage() {
       .map((value) => normalizeSearchValue(value))
       .some((value) => value.includes(normalizedCalendarSearch))
   })
+  const displayedTimelineOrders =
+    selectedChamberNames.length > 0
+      ? filteredTimelineOrders.filter((order) =>
+          selectedChamberNames.includes(order.chamberName),
+        )
+      : filteredTimelineOrders
   const planningEditorRecipeOptions = listRipeningRecipes(
     planningEditorDraft?.product ?? '',
   )
@@ -985,32 +991,128 @@ function HomePage() {
   const simulationMetrics = simulationSummary
     ? buildSimulationMetrics(simulationSummary, 1)
     : []
-  const dailyFlowBoard = simulationSummary
+  const sidebarFlowBoard = simulationSummary
     ? buildDailyFlowBoard(
         filteredTimelineOrders,
         chamberFill,
         simulationSummary.dateRange,
       )
     : null
-  const ripeningChamberRows =
-    dailyFlowBoard?.chamberRows.filter((row) => row.mode !== 'conservation') ??
-    []
-  const conservationChamberRows =
-    dailyFlowBoard?.chamberRows.filter((row) => row.mode === 'conservation') ??
-    []
-  const groupedTimelineBars = buildTimelineBarGroups(filteredTimelineOrders)
-  const chamberModeSummary = {
-    ripening: ripeningChamberRows.length,
-    conservation: conservationChamberRows.length,
-    alerts: ripeningChamberRows.filter((row) => row.hasIssue).length,
-  }
-  const activeFlowSelection = flowSelectionDraft ?? flowSelection
-  const selectedFlowSummary = buildFlowSelectionSummary(
-    dailyFlowBoard?.chamberRows.find(
-      (row) => row.name === activeFlowSelection?.chamberName,
-    ),
-    activeFlowSelection,
-    simulationSummary?.dateRange ?? [],
+  const dailyFlowBoard = simulationSummary
+    ? buildDailyFlowBoard(
+        displayedTimelineOrders,
+        chamberFill,
+        simulationSummary.dateRange,
+      )
+    : null
+  const sidebarChamberRows = sidebarFlowBoard?.chamberRows ?? []
+  const chamberFillByName = new Map(
+    chamberFill.map((entry) => [entry.name, entry]),
+  )
+  const productCalendarRows = [
+    {
+      key: 'platano',
+      label: 'PLATANO',
+      availabilityLabel: 'Banana',
+    },
+    {
+      key: 'palta',
+      label: 'PALTA',
+      availabilityLabel: 'Avocado',
+    },
+  ].map((productRow) => ({
+    ...productRow,
+    days:
+      dailyFlowBoard?.days.map((day) => {
+        const inbound = displayedTimelineOrders
+          .filter(
+            (order) =>
+              order.productGroupLabel === productRow.key &&
+              order.startDate === day.date,
+          )
+          .reduce((total, order) => total + order.quantityBoxes, 0)
+        const outbound = displayedTimelineOrders
+          .filter(
+            (order) =>
+              order.productGroupLabel === productRow.key &&
+              order.requiredDate === day.date,
+          )
+          .reduce((total, order) => total + order.quantityBoxes, 0)
+
+        return {
+          date: day.date,
+          inbound,
+          outbound,
+        }
+      }) ?? [],
+  }))
+  const productAvailabilityByDay = productCalendarRows.map((productRow) => {
+    let runningAvailable = 0
+
+    return {
+      ...productRow,
+      days: productRow.days.map((day) => {
+        runningAvailable += day.inbound - day.outbound
+
+        return {
+          date: day.date,
+          available: Math.max(runningAvailable, 0),
+        }
+      }),
+    }
+  })
+  const allVisibleDays = dailyFlowBoard?.days ?? []
+  const resolvedCalendarAnchorDate =
+    allVisibleDays.find((day) => day.date === calendarAnchorDate)?.date ??
+    allVisibleDays[0]?.date ??
+    ''
+  const resolvedCalendarAnchorDay = allVisibleDays.find(
+    (day) => day.date === resolvedCalendarAnchorDate,
+  )
+  const visibleCalendarDays = allVisibleDays.filter((day) => {
+    if (!resolvedCalendarAnchorDate || !resolvedCalendarAnchorDay) {
+      return true
+    }
+
+    if (calendarViewMode === 'day') {
+      return day.date === resolvedCalendarAnchorDate
+    }
+
+    if (calendarViewMode === 'week') {
+      const anchorWeekStart = getVisualWeekStart(resolvedCalendarAnchorDate)
+      const dayWeekStart = getVisualWeekStart(day.date)
+
+      return anchorWeekStart !== '' && dayWeekStart === anchorWeekStart
+    }
+
+    return day.date.slice(0, 7) === resolvedCalendarAnchorDate.slice(0, 7)
+  })
+  const visibleCalendarDates = new Set(
+    visibleCalendarDays.map((day) => day.date),
+  )
+  const visibleDateCount = visibleCalendarDays.length
+  const visibleDateRangeLabel =
+    calendarViewMode === 'day'
+      ? formatCalendarDate(resolvedCalendarAnchorDate)
+      : calendarViewMode === 'week'
+        ? visibleCalendarDays.length > 0
+          ? `${formatCalendarDate(visibleCalendarDays[0]?.date)} - ${formatCalendarDate(visibleCalendarDays.at(-1)?.date)}`
+          : ''
+        : formatMonthLabel(resolvedCalendarAnchorDate)
+  const visibleProductCalendarRows = productCalendarRows.map((productRow) => ({
+    ...productRow,
+    days: productRow.days.filter((day) => visibleCalendarDates.has(day.date)),
+  }))
+  const visibleProductAvailabilityByDay = productAvailabilityByDay.map(
+    (productRow) => ({
+      ...productRow,
+      days: productRow.days.filter((day) => visibleCalendarDates.has(day.date)),
+    }),
+  )
+  const schedulerHourLabels = buildSchedulerHourLabels()
+  const schedulerOperationEventsByDate = buildSchedulerOperationEvents(
+    displayedTimelineOrders,
+    visibleCalendarDates,
   )
   const workbookWarnings = parsedWorkbook?.warnings ?? []
   const hasLoadedWorkbook = parsedWorkbook !== null
@@ -1047,6 +1149,30 @@ function HomePage() {
   const hasAnyRipeningChamber = previewChamberNames.some(
     (name) => normalizedChamberModesDraft[name] === 'ripening',
   )
+
+  useEffect(() => {
+    if (!allVisibleDays.length) {
+      if (calendarAnchorDate) {
+        setCalendarAnchorDate('')
+      }
+      return
+    }
+
+    if (!allVisibleDays.some((day) => day.date === calendarAnchorDate)) {
+      setCalendarAnchorDate(allVisibleDays[0]?.date ?? '')
+    }
+  }, [allVisibleDays, calendarAnchorDate])
+
+  useEffect(() => {
+    const availableChamberNames = new Set(
+      sidebarChamberRows.map((row) => row.name),
+    )
+
+    setSelectedChamberNames((current) =>
+      current.filter((name) => availableChamberNames.has(name)),
+    )
+  }, [sidebarChamberRows])
+
   const hasPendingChamberConfig =
     hasPendingChamberCount || hasPendingChamberModes
 
@@ -1108,28 +1234,6 @@ function HomePage() {
 
     return () => {
       isCancelled = true
-    }
-  }, [])
-
-  useEffect(() => {
-    function handleWindowPointerUp() {
-      setFlowSelectionDraft((current) => {
-        if (!current) {
-          return current
-        }
-
-        if (current.startDate !== current.endDate) {
-          setFlowSelection(current)
-        }
-
-        return null
-      })
-    }
-
-    window.addEventListener('mouseup', handleWindowPointerUp)
-
-    return () => {
-      window.removeEventListener('mouseup', handleWindowPointerUp)
     }
   }, [])
 
@@ -1280,97 +1384,18 @@ function HomePage() {
     )
   }
 
+  function handleToggleChamberSelection(chamberName: string) {
+    setSelectedChamberNames((current) =>
+      current.includes(chamberName)
+        ? current.filter((name) => name !== chamberName)
+        : [...current, chamberName].sort(compareTextValues),
+    )
+  }
+
   function handleEditPlanningLine(order: TimelineOrder) {
     const row = activeSheet?.dataframe.rows[order.sourceRowIndex]
 
     setPlanningEditorDraft(buildPlanningEditorDraft(row, order.sourceRowIndex))
-  }
-
-  async function handleOpenFlowBoardCell(chamberName: string, date: string) {
-    if (filteredTimelineOrders.length === 0) {
-      return
-    }
-
-    const matchingOrders = filteredTimelineOrders.filter(
-      (order) =>
-        order.chamberName === chamberName &&
-        isDateWithinOrderWindow(order, date),
-    )
-    const sourceRowIndexes = [
-      ...new Set(matchingOrders.map((order) => order.sourceRowIndex)),
-    ].sort((left, right) => left - right)
-
-    if (sourceRowIndexes.length === 0) {
-      handleCreatePlanningLineForDate(date)
-      return
-    }
-
-    if (sourceRowIndexes.length === 1) {
-      const matchingOrder = matchingOrders.find(
-        (order) => order.sourceRowIndex === sourceRowIndexes[0],
-      )
-
-      if (matchingOrder) {
-        await handleEditPlanningLine(matchingOrder)
-        return
-      }
-    }
-
-    setGroupedBarViewer({
-      title:
-        [
-          ...new Set(
-            matchingOrders.map((order) => order.product).filter(Boolean),
-          ),
-        ].length === 1
-          ? (matchingOrders[0]?.product ?? chamberName)
-          : `${[...new Set(matchingOrders.map((order) => order.product).filter(Boolean))].length} productos activos`,
-      subtitle: `${chamberName} · ${formatCalendarDate(date)}`,
-      sourceRowIndexes,
-    })
-  }
-
-  function handleFlowCellPointerDown(chamberName: string, date: string) {
-    flowSelectionSuppressClickRef.current = false
-    setFlowSelectionDraft({
-      chamberName,
-      startDate: date,
-      endDate: date,
-    })
-    setFlowSelection(null)
-  }
-
-  function handleFlowCellPointerEnter(chamberName: string, date: string) {
-    setFlowSelectionDraft((current) => {
-      if (!current || current.chamberName !== chamberName) {
-        return current
-      }
-
-      if (current.endDate !== date) {
-        flowSelectionSuppressClickRef.current = true
-      }
-
-      return {
-        ...current,
-        endDate: date,
-      }
-    })
-  }
-
-  function handleFlowCellPointerUp() {
-    if (!flowSelectionDraft) {
-      return
-    }
-
-    const nextSelection = flowSelectionDraft
-    setFlowSelectionDraft(null)
-
-    if (nextSelection.startDate !== nextSelection.endDate) {
-      setFlowSelection(nextSelection)
-      return
-    }
-
-    setFlowSelection(null)
   }
 
   async function handleSavePlanningLine() {
@@ -1822,47 +1847,84 @@ function HomePage() {
       {simulationSummary ? (
         <section className="simulation-panel">
           {dailyFlowBoard ? (
-            <section className="subpanel calendar-panel timeline-board-panel">
-              <div className="timeline-board-header">
-                <div className="timeline-board-copy">
-                  <span className="timeline-board-kicker">
-                    Timeline de camaras
-                  </span>
-                  <h3>Ocupacion de camaras en el tiempo</h3>
-                  <p>
-                    Vista operativa para seguir entradas, salidas y entregas
-                    listas sin perder foco en las camaras.
-                  </p>
+            <section className="subpanel scheduler-panel">
+              <div className="scheduler-topbar">
+                <div className="scheduler-topbar-copy">
+                  <h3>Calendar</h3>
                 </div>
 
-                <div className="timeline-board-summary">
-                  <article className="timeline-board-summary-card">
-                    <span className="section-label">Maduracion</span>
-                    <strong>{chamberModeSummary.ripening}</strong>
-                    <span>
-                      {chamberModeSummary.ripening === 1
-                        ? 'camara activa'
-                        : 'camaras activas'}
-                    </span>
-                  </article>
-                  <article className="timeline-board-summary-card">
-                    <span className="section-label">Conservacion</span>
-                    <strong>{chamberModeSummary.conservation}</strong>
-                    <span>
-                      {chamberModeSummary.conservation === 1
-                        ? 'camara reservada'
-                        : 'camaras reservadas'}
-                    </span>
-                  </article>
-                  <article className="timeline-board-summary-card">
-                    <span className="section-label">Alertas</span>
-                    <strong>{chamberModeSummary.alerts}</strong>
-                    <span>
-                      {chamberModeSummary.alerts === 1
-                        ? 'camara con alerta'
-                        : 'camaras con alerta'}
-                    </span>
-                  </article>
+                <div className="scheduler-topbar-actions">
+                  {simulationSummary ? (
+                    <button
+                      className="ghost-link scheduler-download-link"
+                      type="button"
+                      onClick={() => {
+                        if (!activeSheet) {
+                          return
+                        }
+
+                        exportSimulationWorkbook({
+                          activeSheet,
+                          chamberFill,
+                          fileName: selectedFileName,
+                          metrics: simulationMetrics,
+                          scenarioDetail: 'Planificacion base',
+                          scenarioLabel: 'Planificacion base',
+                          summary: simulationSummary,
+                          timelineOrders,
+                        })
+                      }}
+                    >
+                      Export
+                    </button>
+                  ) : null}
+
+                  <div className="scheduler-view-switch">
+                    <button
+                      type="button"
+                      className={[
+                        'scheduler-view-pill',
+                        calendarViewMode === 'day' ? 'is-active' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      onClick={() => setCalendarViewMode('day')}
+                    >
+                      DAY
+                    </button>
+                    <button
+                      type="button"
+                      className={[
+                        'scheduler-view-pill',
+                        calendarViewMode === 'week' ? 'is-active' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      onClick={() => setCalendarViewMode('week')}
+                    >
+                      WEEK
+                    </button>
+                    <button
+                      type="button"
+                      className={[
+                        'scheduler-view-pill',
+                        calendarViewMode === 'month' ? 'is-active' : '',
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
+                      onClick={() => setCalendarViewMode('month')}
+                    >
+                      MONTH
+                    </button>
+                  </div>
+
+                  <button
+                    className="primary-button scheduler-new-order"
+                    type="button"
+                    onClick={() => setIsPlanningOpen(true)}
+                  >
+                    + New order
+                  </button>
                 </div>
               </div>
 
@@ -1898,24 +1960,6 @@ function HomePage() {
                   </select>
                 </label>
 
-                <label className="filter-field">
-                  <span>Producto</span>
-                  <select
-                    className="filter-select"
-                    value={calendarProductFilter}
-                    onChange={(event) =>
-                      setCalendarProductFilter(event.target.value)
-                    }
-                  >
-                    <option value="all">Todos los productos</option>
-                    {productFilterOptions.map((product) => (
-                      <option key={product} value={product}>
-                        {product}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
                 <button
                   className="secondary-button calendar-add"
                   type="button"
@@ -1939,6 +1983,7 @@ function HomePage() {
                   onClick={() => {
                     setCalendarSearch('')
                     setCalendarProductFilter('all')
+                    setSelectedChamberNames([])
                   }}
                 >
                   Limpiar filtros
@@ -1961,477 +2006,355 @@ function HomePage() {
                 </p>
               ) : null}
 
-              {selectedFlowSummary ? (
-                <div className="flow-selection-banner">
-                  <div>
-                    <span className="section-label">Seleccion activa</span>
-                    <strong>
-                      {selectedFlowSummary.chamberName} ·{' '}
-                      {formatCalendarDate(selectedFlowSummary.fromDate)}
-                      {selectedFlowSummary.fromDate !==
-                      selectedFlowSummary.toDate
-                        ? ` a ${formatCalendarDate(selectedFlowSummary.toDate)}`
-                        : ''}
-                    </strong>
+              <div className="scheduler-layout">
+                <aside className="scheduler-sidebar">
+                  <div className="scheduler-sidebar-product-filter">
+                    <span className="scheduler-sidebar-title">Producto</span>
+                    <div className="scheduler-product-pills">
+                      <button
+                        type="button"
+                        className={[
+                          'scheduler-product-pill',
+                          calendarProductFilter === 'all' ? 'is-active' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                        onClick={() => setCalendarProductFilter('all')}
+                      >
+                        Ambos
+                      </button>
+                      <button
+                        type="button"
+                        className={[
+                          'scheduler-product-pill',
+                          calendarProductFilter === 'platano'
+                            ? 'is-active'
+                            : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                        onClick={() => setCalendarProductFilter('platano')}
+                      >
+                        Platano
+                      </button>
+                      <button
+                        type="button"
+                        className={[
+                          'scheduler-product-pill',
+                          calendarProductFilter === 'palta' ? 'is-active' : '',
+                        ]
+                          .filter(Boolean)
+                          .join(' ')}
+                        onClick={() => setCalendarProductFilter('palta')}
+                      >
+                        Palta
+                      </button>
+                    </div>
                   </div>
-                  <div className="flow-selection-metrics">
-                    <span>Ingreso: {selectedFlowSummary.inboundTotal}</span>
-                    <span>Salida: {selectedFlowSummary.outboundTotal}</span>
-                    <span>
-                      Producto:{' '}
-                      {selectedFlowSummary.products.length > 0
-                        ? selectedFlowSummary.products.join(', ')
-                        : 'Sin producto'}
-                    </span>
-                    <span>
-                      OC:{' '}
-                      {selectedFlowSummary.purchaseOrders.length > 0
-                        ? selectedFlowSummary.purchaseOrders.join(', ')
-                        : 'Sin OC'}
-                    </span>
-                  </div>
-                  <button
-                    className="ghost-link"
-                    type="button"
-                    onClick={() => setFlowSelection(null)}
-                  >
-                    Limpiar
-                  </button>
-                </div>
-              ) : null}
 
-              <div className="calendar-shell timeline-board-shell">
-                <div className="calendar-scroll timeline-board-scroll">
-                  <div className="calendar-body timeline-board-body">
-                    <div className="timeline-date-row">
-                      <div className="timeline-side-label timeline-side-label-header">
-                        <span className="section-label">Semana</span>
-                        <strong>
-                          {dailyFlowBoard.days[0]?.weekLabel ?? 'Sin semana'}
-                        </strong>
+                  <p className="scheduler-sidebar-title">Chamber status</p>
+                  <div className="scheduler-sidebar-list">
+                    {sidebarChamberRows.map((chamberRow) => {
+                      const chamberSummary = chamberFillByName.get(
+                        chamberRow.name,
+                      )
+                      const chamberTone =
+                        buildFlowBoardChamberStatusTone(chamberRow)
+                      const isChamberSelected =
+                        selectedChamberNames.length === 0 ||
+                        selectedChamberNames.includes(chamberRow.name)
+
+                      return (
+                        <button
+                          key={`sidebar-${chamberRow.name}`}
+                          type="button"
+                          className={[
+                            'scheduler-chamber-card',
+                            isChamberSelected ? 'is-active' : 'is-muted',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          onClick={() =>
+                            handleToggleChamberSelection(chamberRow.name)
+                          }
+                        >
+                          <div className="scheduler-chamber-card-head">
+                            <div>
+                              <strong>{chamberRow.name}</strong>
+                              <span>
+                                {chamberRow.productSummary.length > 0
+                                  ? chamberRow.productSummary
+                                      .slice(0, 2)
+                                      .join(' · ')
+                                  : chamberRow.mode === 'conservation'
+                                    ? 'Conservacion'
+                                    : 'Sin producto'}
+                              </span>
+                            </div>
+                            <span
+                              className={`scheduler-status-dot is-${chamberTone}`}
+                            />
+                          </div>
+
+                          <div className="scheduler-chamber-card-meta">
+                            <span>
+                              {chamberSummary?.occupancy ?? 0}% Capacity
+                            </span>
+                            <span>
+                              {buildFlowBoardChamberStatus(chamberRow)}
+                            </span>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </aside>
+
+                <div className="scheduler-main">
+                  <div className="scheduler-main-scroll">
+                    <div className="scheduler-range-banner">
+                      <span className="section-label">Vista activa</span>
+                      <strong>{visibleDateRangeLabel || 'Sin rango'}</strong>
+                    </div>
+                    <div
+                      className="scheduler-day-header"
+                      style={{
+                        gridTemplateColumns: `repeat(${visibleDateCount}, minmax(130px, 1fr))`,
+                      }}
+                    >
+                      {visibleCalendarDays.map((day) => (
+                        <button
+                          key={`scheduler-day-${day.date}`}
+                          type="button"
+                          className={[
+                            'scheduler-day-head',
+                            day.date === resolvedCalendarAnchorDate
+                              ? 'is-active'
+                              : '',
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          onClick={() => setCalendarAnchorDate(day.date)}
+                        >
+                          <span>{day.weekdayShort}</span>
+                          <strong>{day.date.slice(5)}</strong>
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="scheduler-summary-table">
+                      {visibleProductCalendarRows.map((productRow) => (
+                        <div
+                          key={productRow.key}
+                          className="scheduler-summary-row"
+                        >
+                          <div className="scheduler-summary-label">
+                            {productRow.label}
+                          </div>
+                          <div
+                            className="scheduler-summary-values"
+                            style={{
+                              gridTemplateColumns: `repeat(${visibleDateCount}, minmax(130px, 1fr))`,
+                            }}
+                          >
+                            {productRow.days.map((day) => (
+                              <div
+                                key={`${productRow.key}-${day.date}`}
+                                className="scheduler-summary-cell"
+                              >
+                                <span className="scheduler-summary-in">
+                                  {day.inbound > 0 ? `+${day.inbound}` : '+0'}
+                                </span>
+                                <span className="scheduler-summary-out">
+                                  {day.outbound > 0 ? `-${day.outbound}` : '-0'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="scheduler-calendar-shell">
+                      <div className="scheduler-time-rail">
+                        {schedulerHourLabels.map((hourLabel) => (
+                          <div
+                            key={`scheduler-hour-${hourLabel}`}
+                            className="scheduler-time-slot"
+                          >
+                            {hourLabel}
+                          </div>
+                        ))}
                       </div>
 
                       <div
-                        className="timeline-date-strip"
+                        className="scheduler-calendar-grid"
                         style={{
-                          gridTemplateColumns: `repeat(${dailyFlowBoard.days.length}, minmax(118px, 1fr))`,
+                          gridTemplateColumns: `repeat(${visibleDateCount}, minmax(150px, 1fr))`,
                         }}
                       >
-                        {dailyFlowBoard.days.map((day) => (
+                        {visibleCalendarDays.map((day) => {
+                          const dayEvents =
+                            schedulerOperationEventsByDate.get(day.date) ?? []
+
+                          return (
+                            <div
+                              key={`calendar-day-${day.date}`}
+                              className="scheduler-calendar-column"
+                              style={{
+                                height:
+                                  (SCHEDULER_DAY_END_HOUR -
+                                    SCHEDULER_DAY_START_HOUR) *
+                                  SCHEDULER_HOUR_ROW_HEIGHT,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                className="scheduler-calendar-hitarea"
+                                onClick={() =>
+                                  handleCreatePlanningLineForDate(day.date)
+                                }
+                                aria-label={`Agregar linea para ${formatCalendarDate(day.date)}`}
+                              />
+                              {schedulerHourLabels
+                                .slice(0, -1)
+                                .map((hourLabel) => (
+                                  <div
+                                    key={`${day.date}-${hourLabel}`}
+                                    className="scheduler-calendar-hour-line"
+                                  />
+                                ))}
+
+                              {dayEvents.map((event) => {
+                                const top =
+                                  ((event.startMinute -
+                                    SCHEDULER_DAY_START_HOUR * 60) /
+                                    60) *
+                                  SCHEDULER_HOUR_ROW_HEIGHT
+                                const height =
+                                  ((event.endMinute - event.startMinute) / 60) *
+                                  SCHEDULER_HOUR_ROW_HEIGHT
+                                const laneWidth = 100 / event.laneCount
+                                const leftOffset = event.lane * laneWidth
+                                const tone = event.riskNote
+                                  ? 'is-risk'
+                                  : event.operationType === 'outbound'
+                                    ? 'is-out'
+                                    : event.productGroupLabel === 'palta'
+                                      ? 'is-green'
+                                      : 'is-blue'
+
+                                return (
+                                  <button
+                                    key={event.id}
+                                    type="button"
+                                    className={[
+                                      'scheduler-calendar-event',
+                                      tone,
+                                      event.sourceRowIndexes.length > 1
+                                        ? 'is-grouped'
+                                        : '',
+                                    ]
+                                      .filter(Boolean)
+                                      .join(' ')}
+                                    style={{
+                                      top,
+                                      height,
+                                      left: `calc(${leftOffset}% + 6px)`,
+                                      width: `calc(${laneWidth}% - 12px)`,
+                                    }}
+                                    title={[
+                                      `${event.operationType === 'inbound' ? 'Ingreso' : 'Salida'} · ${event.chamberName}`,
+                                      `${formatTimeLabel(event.startMinute)} - ${formatTimeLabel(event.endMinute)}`,
+                                      event.product,
+                                      `Cantidad: ${event.quantityBoxes} cajas`,
+                                      event.purchaseOrders.length > 0
+                                        ? `OC: ${event.purchaseOrders.join(', ')}`
+                                        : '',
+                                      event.riskNote ?? '',
+                                    ]
+                                      .filter(Boolean)
+                                      .join('\n')}
+                                    onClick={(clickEvent) => {
+                                      clickEvent.stopPropagation()
+
+                                      if (event.sourceRowIndexes.length > 1) {
+                                        setGroupedBarViewer({
+                                          title: `${event.product} · ${event.operationType === 'inbound' ? 'Ingreso' : 'Salida'}`,
+                                          subtitle: `${event.chamberName} · ${formatCalendarDate(event.date)} · ${formatTimeLabel(event.startMinute)}`,
+                                          sourceRowIndexes:
+                                            event.sourceRowIndexes,
+                                        })
+                                        return
+                                      }
+
+                                      const sourceRowIndex =
+                                        event.sourceRowIndexes[0]
+                                      const matchingOrder =
+                                        filteredTimelineOrders.find(
+                                          (order) =>
+                                            order.sourceRowIndex ===
+                                            sourceRowIndex,
+                                        )
+
+                                      if (matchingOrder) {
+                                        handleEditPlanningLine(matchingOrder)
+                                      }
+                                    }}
+                                  >
+                                    <span className="scheduler-calendar-event-badge">
+                                      {event.operationType === 'inbound'
+                                        ? '+'
+                                        : '-'}
+                                      {event.quantityBoxes}
+                                    </span>
+                                    <div className="scheduler-calendar-event-copy">
+                                      <span className="scheduler-calendar-event-time">
+                                        {formatTimeLabel(event.startMinute)} -{' '}
+                                        {formatTimeLabel(event.endMinute)}
+                                      </span>
+                                      <strong>{event.product}</strong>
+                                      <span>{event.chamberName}</span>
+                                    </div>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="scheduler-available-row">
+                      <div className="scheduler-available-label">
+                        AVAILABLE:
+                      </div>
+                      <div
+                        className="scheduler-available-values"
+                        style={{
+                          gridTemplateColumns: `repeat(${visibleDateCount}, minmax(130px, 1fr))`,
+                        }}
+                      >
+                        {visibleCalendarDays.map((day, dayIndex) => (
                           <div
-                            key={`timeline-date-${day.date}`}
-                            className="timeline-date-chip"
+                            key={`available-${day.date}`}
+                            className="scheduler-available-cell"
                           >
-                            <strong>{day.date.slice(5)}</strong>
-                            <span>{day.weekdayShort}</span>
+                            {visibleProductAvailabilityByDay.map(
+                              (productRow) => (
+                                <span
+                                  key={`${productRow.key}-${day.date}`}
+                                  className="scheduler-available-item"
+                                >
+                                  {productRow.availabilityLabel}:{' '}
+                                  {productRow.days[dayIndex]?.available ?? 0}u
+                                </span>
+                              ),
+                            )}
                           </div>
                         ))}
                       </div>
                     </div>
-
-                    {[
-                      {
-                        label: 'Entrega',
-                        tone: 'out',
-                        values: dailyFlowBoard.days.map(
-                          (day) => day.totalOutboundBoxes,
-                        ),
-                      },
-                      {
-                        label: 'Ingreso',
-                        tone: 'in',
-                        values: dailyFlowBoard.days.map(
-                          (day) => day.totalInboundBoxes,
-                        ),
-                      },
-                      {
-                        label: 'Disponible',
-                        tone: 'neutral',
-                        values: dailyFlowBoard.days.map(
-                          (day) => day.availablePallets,
-                        ),
-                      },
-                    ].map((row) => (
-                      <div key={row.label} className="timeline-summary-row">
-                        <div className="timeline-side-label">
-                          <span className="section-label">{row.label}</span>
-                        </div>
-                        <div
-                          className="timeline-summary-strip"
-                          style={{
-                            gridTemplateColumns: `repeat(${dailyFlowBoard.days.length}, minmax(118px, 1fr))`,
-                          }}
-                        >
-                          {row.values.map((value, index) => (
-                            <div
-                              key={`${row.label}-${dailyFlowBoard.days[index]?.date ?? index}`}
-                              className={`timeline-summary-chip is-${row.tone}`}
-                            >
-                              {value > 0 ? value : '—'}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-
-                    {[
-                      {
-                        title: 'Maduracion',
-                        rows: ripeningChamberRows,
-                      },
-                      {
-                        title: 'Conservacion',
-                        rows: conservationChamberRows,
-                      },
-                    ]
-                      .filter((section) => section.rows.length > 0)
-                      .map((section) => (
-                        <section
-                          key={section.title}
-                          className="timeline-section-block"
-                        >
-                          <div className="timeline-section-heading">
-                            <span className="section-label">
-                              {section.title}
-                            </span>
-                          </div>
-
-                          <div className="timeline-row-list">
-                            {section.rows.map((chamberRow) => {
-                              const chamberGroups =
-                                groupedTimelineBars.get(chamberRow.name) ?? []
-                              const laneCount = Math.max(
-                                1,
-                                ...chamberGroups.map((group) => group.lane + 1),
-                              )
-
-                              return (
-                                <div
-                                  key={chamberRow.name}
-                                  className="timeline-chamber-row"
-                                >
-                                  <div className="timeline-chamber-card">
-                                    <div className="timeline-chamber-card-head">
-                                      <div>
-                                        <strong>{chamberRow.name}</strong>
-                                        <span>
-                                          {chamberRow.productSummary.length > 0
-                                            ? chamberRow.productSummary
-                                                .slice(0, 2)
-                                                .join(' · ')
-                                            : chamberRow.mode === 'conservation'
-                                              ? 'Producto listo o saldo'
-                                              : 'Sin producto activo'}
-                                        </span>
-                                      </div>
-                                      <span
-                                        className={`flow-board-status-pill is-${buildFlowBoardChamberStatusTone(
-                                          chamberRow,
-                                        )}`}
-                                        title={
-                                          chamberRow.issueNote &&
-                                          chamberRow.hasIssue
-                                            ? chamberRow.issueNote
-                                            : undefined
-                                        }
-                                      >
-                                        {buildFlowBoardChamberStatus(
-                                          chamberRow,
-                                        )}
-                                      </span>
-                                    </div>
-
-                                    {chamberRow.issueNote &&
-                                    chamberRow.hasIssue ? (
-                                      <p className="timeline-chamber-warning">
-                                        {chamberRow.issueNote}
-                                      </p>
-                                    ) : null}
-                                  </div>
-
-                                  <div
-                                    className="timeline-track-grid"
-                                    style={{
-                                      gridTemplateColumns: `repeat(${dailyFlowBoard.days.length}, minmax(118px, 1fr))`,
-                                      gridTemplateRows: `repeat(${laneCount}, minmax(72px, auto))`,
-                                    }}
-                                  >
-                                    {dailyFlowBoard.days.map((day) => {
-                                      const inbound =
-                                        chamberRow.inboundByDate[day.date] ?? 0
-                                      const outbound =
-                                        chamberRow.outboundByDate[day.date] ?? 0
-                                      const riskNote =
-                                        chamberRow.riskByDate[day.date] ?? null
-
-                                      return (
-                                        <button
-                                          key={`${chamberRow.name}-${day.date}`}
-                                          type="button"
-                                          className={[
-                                            'timeline-track-slot',
-                                            riskNote ? 'has-risk' : '',
-                                            activeFlowSelection?.chamberName ===
-                                              chamberRow.name &&
-                                            activeFlowSelection &&
-                                            isDateInsideFlowSelection(
-                                              activeFlowSelection,
-                                              day.date,
-                                            )
-                                              ? 'is-selected'
-                                              : '',
-                                          ]
-                                            .filter(Boolean)
-                                            .join(' ')}
-                                          style={{
-                                            gridColumn: `${dailyFlowBoard.days.indexOf(day) + 1}`,
-                                            gridRow: `1 / span ${laneCount}`,
-                                          }}
-                                          title={buildFlowBoardCellTitle(
-                                            chamberRow,
-                                            day.date,
-                                            inbound,
-                                            outbound,
-                                          )}
-                                          onMouseDown={() =>
-                                            handleFlowCellPointerDown(
-                                              chamberRow.name,
-                                              day.date,
-                                            )
-                                          }
-                                          onMouseEnter={(event) => {
-                                            if (event.buttons === 1) {
-                                              handleFlowCellPointerEnter(
-                                                chamberRow.name,
-                                                day.date,
-                                              )
-                                            }
-                                          }}
-                                          onMouseUp={handleFlowCellPointerUp}
-                                          onClick={() => {
-                                            if (
-                                              flowSelectionSuppressClickRef.current
-                                            ) {
-                                              flowSelectionSuppressClickRef.current = false
-                                              return
-                                            }
-
-                                            void handleOpenFlowBoardCell(
-                                              chamberRow.name,
-                                              day.date,
-                                            )
-                                          }}
-                                        >
-                                          <span className="timeline-slot-plus">
-                                            +
-                                          </span>
-                                          {inbound > 0 ? (
-                                            <span className="timeline-cell-chip is-in">
-                                              <span>↑</span>
-                                              <strong>{inbound}</strong>
-                                            </span>
-                                          ) : null}
-                                          {outbound > 0 ? (
-                                            <span className="timeline-cell-chip is-out">
-                                              <span>↓</span>
-                                              <strong>{outbound}</strong>
-                                            </span>
-                                          ) : null}
-                                          {riskNote ? (
-                                            <span
-                                              className="timeline-cell-risk"
-                                              data-risk={riskNote}
-                                            >
-                                              !
-                                            </span>
-                                          ) : null}
-                                        </button>
-                                      )
-                                    })}
-
-                                    {chamberGroups.map((group) => {
-                                      const span =
-                                        group.endIndex - group.startIndex + 1
-                                      const uniqueProducts = [
-                                        ...new Set(
-                                          group.sourceRowIndexes
-                                            .map(
-                                              (sourceRowIndex) =>
-                                                activeSheet?.dataframe.rows[
-                                                  sourceRowIndex
-                                                ]?.product,
-                                            )
-                                            .filter(Boolean),
-                                        ),
-                                      ]
-                                      const titleLines = [
-                                        group.product,
-                                        group.recipeLabel,
-                                        `Entrega(s): ${group.requiredDates
-                                          .map((date) =>
-                                            formatCalendarDate(date),
-                                          )
-                                          .join(', ')}`,
-                                        uniqueProducts.length > 0
-                                          ? `Productos: ${uniqueProducts.join(', ')}`
-                                          : '',
-                                        group.riskNote
-                                          ? `Alerta: ${group.riskNote}`
-                                          : '',
-                                      ].filter(Boolean)
-
-                                      return (
-                                        <button
-                                          key={group.id}
-                                          type="button"
-                                          className={[
-                                            'order-bar',
-                                            'timeline-order-bar',
-                                            group.scenarioStatus === 'late_risk'
-                                              ? 'is-risk'
-                                              : 'is-ready',
-                                            group.sourceRowIndexes.length > 1
-                                              ? 'is-grouped'
-                                              : '',
-                                          ]
-                                            .filter(Boolean)
-                                            .join(' ')}
-                                          style={{
-                                            gridColumn: `${group.startIndex + 1} / span ${span}`,
-                                            gridRow: `${group.lane + 1}`,
-                                          }}
-                                          title={titleLines.join('\n')}
-                                          onClick={() => {
-                                            if (
-                                              group.sourceRowIndexes.length > 1
-                                            ) {
-                                              setGroupedBarViewer(
-                                                buildGroupedBarViewerPayload(
-                                                  group,
-                                                  chamberRow.name,
-                                                  activeSheet,
-                                                ),
-                                              )
-                                              return
-                                            }
-
-                                            const sourceRowIndex =
-                                              group.sourceRowIndexes[0]
-                                            const matchingOrder =
-                                              filteredTimelineOrders.find(
-                                                (order) =>
-                                                  order.sourceRowIndex ===
-                                                  sourceRowIndex,
-                                              )
-
-                                            if (matchingOrder) {
-                                              handleEditPlanningLine(
-                                                matchingOrder,
-                                              )
-                                            }
-                                          }}
-                                        >
-                                          <div className="order-bar-copy">
-                                            <strong>{group.product}</strong>
-                                            <span className="order-bar-window">
-                                              {formatCalendarDate(
-                                                dailyFlowBoard.days[
-                                                  group.startIndex
-                                                ]?.date,
-                                              )}{' '}
-                                              a{' '}
-                                              {formatCalendarDate(
-                                                dailyFlowBoard.days[
-                                                  group.endIndex
-                                                ]?.date,
-                                              )}
-                                            </span>
-                                          </div>
-
-                                          <div className="order-bar-meta">
-                                            <span className="order-bar-recipe">
-                                              {group.recipeLabel}
-                                            </span>
-                                            <span className="order-bar-secondary">
-                                              {group.deliveryCount === 1
-                                                ? `Listo ${formatCalendarDate(
-                                                    group.requiredDates[0],
-                                                  )}`
-                                                : `Hasta ${formatCalendarDate(
-                                                    group.requiredDates.at(-1),
-                                                  )} · ${
-                                                    group.deliveryCount
-                                                  } entregas`}
-                                            </span>
-                                          </div>
-
-                                          <div className="order-bar-milestones">
-                                            {group.requiredDates.map(
-                                              (
-                                                requiredDate,
-                                                milestoneIndex,
-                                              ) => {
-                                                const deliveryIndex = Math.min(
-                                                  group.endIndex,
-                                                  Math.max(
-                                                    group.startIndex,
-                                                    dailyFlowBoard.days.findIndex(
-                                                      (day) =>
-                                                        day.date ===
-                                                        requiredDate,
-                                                    ),
-                                                  ),
-                                                )
-                                                const milestoneLeft = `${
-                                                  ((deliveryIndex -
-                                                    group.startIndex +
-                                                    1) /
-                                                    span) *
-                                                  100
-                                                }%`
-
-                                                return (
-                                                  <div
-                                                    key={`${group.id}-${requiredDate}`}
-                                                    className={`order-bar-milestone ${
-                                                      milestoneIndex ===
-                                                      group.requiredDates
-                                                        .length -
-                                                        1
-                                                        ? 'is-final'
-                                                        : ''
-                                                    }`}
-                                                    style={{
-                                                      left: milestoneLeft,
-                                                    }}
-                                                  >
-                                                    <span className="order-bar-milestone-chip">
-                                                      Listo{' '}
-                                                      {formatCalendarDate(
-                                                        requiredDate,
-                                                      )}
-                                                    </span>
-                                                  </div>
-                                                )
-                                              },
-                                            )}
-                                          </div>
-
-                                          {group.riskNote ? (
-                                            <span className="order-bar-cutoff bar-warning">
-                                              Alerta
-                                            </span>
-                                          ) : null}
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        </section>
-                      ))}
                   </div>
                 </div>
               </div>
