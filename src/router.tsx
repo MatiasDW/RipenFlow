@@ -850,6 +850,9 @@ function HomePage() {
   const [hasJustReprocessedPlan, setHasJustReprocessedPlan] = useState(false)
   const [hasJustSavedChambers, setHasJustSavedChambers] = useState(false)
   const [isCalendarHelpOpen, setIsCalendarHelpOpen] = useState(false)
+  const [expandedChamberSummaries, setExpandedChamberSummaries] = useState<
+    string[]
+  >([])
   const [chamberCount, setChamberCount] = useState(defaultChamberCount)
   const [chamberCountInput, setChamberCountInput] = useState(
     String(defaultChamberCount),
@@ -1396,6 +1399,14 @@ function HomePage() {
     )
   }
 
+  function handleToggleChamberSummary(chamberName: string) {
+    setExpandedChamberSummaries((current) =>
+      current.includes(chamberName)
+        ? current.filter((name) => name !== chamberName)
+        : [...current, chamberName].sort(compareTextValues),
+    )
+  }
+
   function handleEditPlanningLine(order: TimelineOrder) {
     const row = activeSheet?.dataframe.rows[order.sourceRowIndex]
 
@@ -1934,7 +1945,6 @@ function HomePage() {
 
               <div className="calendar-toolbar">
                 <label className="filter-field">
-                  <span>Orden de compra o producto</span>
                   <input
                     className="filter-input"
                     type="text"
@@ -1945,7 +1955,6 @@ function HomePage() {
                 </label>
 
                 <label className="filter-field">
-                  <span>Ordenes cargadas</span>
                   <select
                     className="filter-select"
                     value={
@@ -2064,18 +2073,24 @@ function HomePage() {
                       )
                       const chamberTone =
                         buildFlowBoardChamberStatusTone(chamberRow)
+                      const isSummaryExpanded =
+                        expandedChamberSummaries.includes(chamberRow.name)
                       const isChamberSelected =
                         selectedChamberNames.length === 0 ||
                         selectedChamberNames.includes(chamberRow.name)
-                      const chamberDetails = [
-                        chamberRow.name,
+                      const chamberProductSummary =
                         chamberRow.productSummary.length > 0
                           ? chamberRow.productSummary.join(' · ')
                           : chamberRow.mode === 'conservation'
                             ? 'Conservacion'
-                            : 'Sin producto',
+                            : 'Sin producto'
+                      const chamberStatusSummary =
+                        buildFlowBoardChamberStatus(chamberRow)
+                      const chamberDetails = [
+                        chamberRow.name,
+                        chamberProductSummary,
                         `${chamberSummary?.occupancy ?? 0}% Capacity`,
-                        buildFlowBoardChamberStatus(chamberRow),
+                        chamberStatusSummary,
                         isChamberSelected
                           ? 'Filtro activo'
                           : 'Click para incluir esta camara',
@@ -2084,28 +2099,62 @@ function HomePage() {
                         .join('\n')
 
                       return (
-                        <button
+                        <div
                           key={`sidebar-${chamberRow.name}`}
-                          type="button"
                           className={[
                             'scheduler-chamber-card',
                             isChamberSelected ? 'is-active' : 'is-muted',
                           ]
                             .filter(Boolean)
                             .join(' ')}
-                          onClick={() =>
-                            handleToggleChamberSelection(chamberRow.name)
-                          }
                           title={chamberDetails}
-                          aria-label={chamberDetails.replaceAll('\n', ', ')}
                         >
                           <div className="scheduler-chamber-card-head">
-                            <strong>{chamberRow.name}</strong>
-                            <span
-                              className={`scheduler-status-dot is-${chamberTone}`}
-                            />
+                            <button
+                              type="button"
+                              className="scheduler-chamber-card-select"
+                              onClick={() =>
+                                handleToggleChamberSelection(chamberRow.name)
+                              }
+                            >
+                              <strong>{chamberRow.name}</strong>
+                            </button>
+                            <div className="scheduler-chamber-card-actions">
+                              <button
+                                type="button"
+                                className={[
+                                  'scheduler-chamber-card-toggle',
+                                  isSummaryExpanded ? 'is-open' : '',
+                                ]
+                                  .filter(Boolean)
+                                  .join(' ')}
+                                aria-expanded={isSummaryExpanded}
+                                aria-label={`Ver resumen de ${chamberRow.name}`}
+                                onClick={(event) => {
+                                  event.stopPropagation()
+                                  handleToggleChamberSummary(chamberRow.name)
+                                }}
+                              >
+                                <span>i</span>
+                              </button>
+                              <span
+                                className={`scheduler-status-dot is-${chamberTone}`}
+                              />
+                            </div>
                           </div>
-                        </button>
+                          {isSummaryExpanded ? (
+                            <div className="scheduler-chamber-card-summary">
+                              <span>{chamberProductSummary}</span>
+                              <span>
+                                {chamberSummary?.occupancy ?? 0}% capacidad
+                              </span>
+                              <span>{chamberStatusSummary}</span>
+                              {chamberRow.issueNote ? (
+                                <span>{chamberRow.issueNote}</span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
                       )
                     })}
                   </div>
