@@ -2609,17 +2609,6 @@ td {
 .scheduler-calendar-event-copy {
   display: grid;
   gap: 2px;
-  opacity: 0;
-  transform: translateY(3px);
-  transition:
-    opacity 140ms ease,
-    transform 140ms ease;
-}
-
-.scheduler-calendar-event:hover .scheduler-calendar-event-copy,
-.scheduler-calendar-event:focus-visible .scheduler-calendar-event-copy {
-  opacity: 1;
-  transform: translateY(0);
 }
 
 .scheduler-calendar-event strong {
