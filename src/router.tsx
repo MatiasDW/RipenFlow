@@ -2063,6 +2063,21 @@ function HomePage() {
                       const isChamberSelected =
                         selectedChamberNames.length === 0 ||
                         selectedChamberNames.includes(chamberRow.name)
+                      const chamberDetails = [
+                        chamberRow.name,
+                        chamberRow.productSummary.length > 0
+                          ? chamberRow.productSummary.join(' · ')
+                          : chamberRow.mode === 'conservation'
+                            ? 'Conservacion'
+                            : 'Sin producto',
+                        `${chamberSummary?.occupancy ?? 0}% Capacity`,
+                        buildFlowBoardChamberStatus(chamberRow),
+                        isChamberSelected
+                          ? 'Filtro activo'
+                          : 'Click para incluir esta camara',
+                      ]
+                        .filter(Boolean)
+                        .join('\n')
 
                       return (
                         <button
@@ -2077,32 +2092,14 @@ function HomePage() {
                           onClick={() =>
                             handleToggleChamberSelection(chamberRow.name)
                           }
+                          title={chamberDetails}
+                          aria-label={chamberDetails.replaceAll('\n', ', ')}
                         >
                           <div className="scheduler-chamber-card-head">
-                            <div>
-                              <strong>{chamberRow.name}</strong>
-                              <span>
-                                {chamberRow.productSummary.length > 0
-                                  ? chamberRow.productSummary
-                                      .slice(0, 2)
-                                      .join(' · ')
-                                  : chamberRow.mode === 'conservation'
-                                    ? 'Conservacion'
-                                    : 'Sin producto'}
-                              </span>
-                            </div>
+                            <strong>{chamberRow.name}</strong>
                             <span
                               className={`scheduler-status-dot is-${chamberTone}`}
                             />
-                          </div>
-
-                          <div className="scheduler-chamber-card-meta">
-                            <span>
-                              {chamberSummary?.occupancy ?? 0}% Capacity
-                            </span>
-                            <span>
-                              {buildFlowBoardChamberStatus(chamberRow)}
-                            </span>
                           </div>
                         </button>
                       )
